@@ -32,14 +32,19 @@ typedef enum
 #define MODE_PIN_1 BTN_BTA
 #define MODE_PIN_2 BTN_BTB
 #define MODE_PIN_3 BTN_BTC
+#define MAIN_LOOP_INTERVAL_MS 1
 
 typedef struct {
+    uint8_t encoder_id;
     uint8_t cw_key;  // 顺时针按键
     uint8_t ccw_key; // 逆时针按键
 } EncoderConfig;
 
 static EC11_Encoder encoder1, encoder2;
 static EncoderConfig encoder1_cfg, encoder2_cfg;
+static int16_t joystick_x = 0;
+static int16_t joystick_y = 0;
+
 
 //--------------------------------------------------------------------+
 // 全局变量
@@ -63,16 +68,41 @@ void scanrate_hid_report(void);
 //---------------------------------------------------------------------
 static void encoder_handler(EC11_Direction dir, void* user_data) {
     EncoderConfig* cfg = (EncoderConfig*)user_data;
-    uint8_t key = (dir == EC11_CW) ? cfg->cw_key : cfg->ccw_key;
     
-    if(key != 0) {
-        uint8_t keycode[6] = {key};
-        tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
-        sleep_ms(20);
-        tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, (uint8_t[6]){0});
+    switch(current_mode) {
+    case MODE1: // 键鼠模式
+    {
+        int8_t delta = (dir == EC11_CW) ? 5 : -5;
+        if(cfg->encoder_id == 0) { // 左编码器控制X轴
+            tud_hid_mouse_report(REPORT_ID_MOUSE, 0, delta, 0, 0, 0);
+        } else {                   // 右编码器控制Y轴
+            tud_hid_mouse_report(REPORT_ID_MOUSE, 0, 0, delta, 0, 0);
+        }
+    }
+    break;
+
+    case MODE2: // 手柄模式
+    {
+        int16_t delta = (dir == EC11_CW) ? 512 : -512;
+        if(cfg->encoder_id == 0) { // 左编码器控制X轴
+            joystick_x = (joystick_x + delta > 32767) ? 32767 : 
+                        (joystick_x + delta < -32768) ? -32768 : joystick_x + delta;
+        } else {                   // 右编码器控制Y轴
+            joystick_y = (joystick_y + delta > 32767) ? 32767 : 
+                        (joystick_y + delta < -32768) ? -32768 : joystick_y + delta;
+        }
+    }
+    break;
+
+    default: // 其他模式保持原有功能
+        if(cfg->cw_key && cfg->ccw_key) {
+            uint8_t key = (dir == EC11_CW) ? cfg->cw_key : cfg->ccw_key;
+            uint8_t keycode[6] = {key};
+            tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
+            tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, (uint8_t[6]){0});
+        }
     }
 }
-
 //--------------------------------------------------------------------+
 // 主程序
 //--------------------------------------------------------------------+
@@ -85,7 +115,7 @@ int main(void)
     gpio_init(BTN_START);
     gpio_set_dir(BTN_START, GPIO_IN);
     gpio_pull_up(BTN_START);
-    sleep_ms(10); // 消抖
+    sleep_ms(2); // 消抖
     if (!gpio_get(BTN_START)) {
         reset_usb_boot(0, 0); // 进入USB刷写模式
     }
@@ -109,21 +139,23 @@ int main(void)
     board_led_write(true);
 
     // 初始化编码器
-    encoder1_cfg.cw_key = HID_KEY_VOLUME_UP;
-    encoder1_cfg.ccw_key = HID_KEY_VOLUME_DOWN;
+    encoder1_cfg.encoder_id = 0; // 左编码器
+    encoder1_cfg.cw_key = 0;     // 键鼠模式下不使用
+    encoder1_cfg.ccw_key = 0;
     ec11_init(&encoder1, 7, 8, encoder_handler, &encoder1_cfg);
 
-    encoder2_cfg.cw_key = HID_KEY_PAGE_UP;
-    encoder2_cfg.ccw_key = HID_KEY_PAGE_DOWN;
+    encoder2_cfg.encoder_id = 1; // 右编码器
+    encoder2_cfg.cw_key = 0;
+    encoder2_cfg.ccw_key = 0;
     ec11_init(&encoder2, 9, 10, encoder_handler, &encoder2_cfg);
 
     tud_init(BOARD_TUD_RHPORT);
 
-    while (1)
-    {
+    while (1) {
+        uint32_t start_time = board_millis();
+        
         tud_task();
-        if (board_millis() - boot_start_time > 500 && !boot_mode_done)
-        {
+        if (board_millis() - boot_start_time > 500 && !boot_mode_done) {
             reinit_mode_pins();
             boot_mode_done = true;
         }
@@ -131,6 +163,11 @@ int main(void)
         ec11_update(&encoder2);
         send_mode_hid_report();
         scanrate_hid_report();
+    
+        // 精确控制循环间隔
+        while(board_millis() - start_time < MAIN_LOOP_INTERVAL_MS) {
+            tight_loop_contents(); // 空指令等待
+        }
     }
 }
 
@@ -180,34 +217,38 @@ void send_mode_hid_report(void)
 
     switch (current_mode)
     {
-    case MODE1: // 鼠标模式
-    {
-        int8_t x = 0, y = 0;
-        uint8_t buttons = 0;
-        
-        if (btn_states[0]) buttons |= MOUSE_BUTTON_LEFT;    // BTA
-        if (btn_states[1]) buttons |= MOUSE_BUTTON_RIGHT;   // BTB
-        if (btn_states[2]) buttons |= MOUSE_BUTTON_MIDDLE;  // BTC
-        if (btn_states[3]) x = 5;                          // BTD
-        if (btn_states[4]) y = -5;                          // FXL
-        if (btn_states[6]) y = 5;                           // FXR
-        
-        tud_hid_mouse_report(REPORT_ID_MOUSE, buttons, x, y, 0, 0);
-    }
+        case MODE1: // 键鼠模式
+        {
+            uint8_t keycode[6] = {0};
+            uint8_t idx = 0;
+            if (btn_states[0]) keycode[idx++] = HID_KEY_D;  // BTA
+            if (btn_states[1]) keycode[idx++] = HID_KEY_F;  // BTB
+            if (btn_states[2]) keycode[idx++] = HID_KEY_J;  // BTC
+            if (btn_states[3]) keycode[idx++] = HID_KEY_K;  // BTD
+            if (btn_states[4]) keycode[idx++] = HID_KEY_N;  // FXL
+            if (btn_states[5]) keycode[idx++] = HID_KEY_Y;  // START
+            if (btn_states[6]) keycode[idx++] = HID_KEY_M;  // FXR
+            tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
+        }
     break;
 
-    case MODE2: // 键盘模式
+    case MODE2: // 手柄模式
     {
-        uint8_t keycode[6] = {0};
-        uint8_t idx = 0;
-        if (btn_states[0]) keycode[idx++] = HID_KEY_A;      // BTA
-        if (btn_states[1]) keycode[idx++] = HID_KEY_B;      // BTB
-        if (btn_states[2]) keycode[idx++] = HID_KEY_C;      // BTC
-        if (btn_states[3]) keycode[idx++] = HID_KEY_D;      // BTD
-        if (btn_states[4]) keycode[idx++] = HID_KEY_F1;     // FXL
-        if (btn_states[5]) keycode[idx++] = HID_KEY_ENTER;  // START
-        if (btn_states[6]) keycode[idx++] = HID_KEY_F2;     // FXR
-        tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
+        hid_gamepad_report_t report = {0};
+        // 按钮映射
+        if (btn_states[0]) report.buttons |= GAMEPAD_BUTTON_A;       // BTA
+        if (btn_states[1]) report.buttons |= GAMEPAD_BUTTON_B;       // BTB
+        if (btn_states[2]) report.buttons |= GAMEPAD_BUTTON_X;       // BTC
+        if (btn_states[3]) report.buttons |= GAMEPAD_BUTTON_Y;       // BTD
+        if (btn_states[4]) report.buttons |= GAMEPAD_BUTTON_TL;    // FXL
+        if (btn_states[5]) report.buttons |= GAMEPAD_BUTTON_START;   // START
+        if (btn_states[6]) report.buttons |= GAMEPAD_BUTTON_TR;   // FXR
+        
+        // 摇杆数据
+        report.x = joystick_x;
+        report.y = joystick_y;
+        
+        tud_hid_report(REPORT_ID_GAMEPAD, &report, sizeof(report));
     }
     break;
 
