@@ -29,8 +29,8 @@ typedef enum
 #define BTN_START 1
 #define BTN_FXR 0
 
-#define ENCODER_A2 8
-#define ENCODER_B2 7
+#define ENCODER_A2 7
+#define ENCODER_B2 8
 #define ENCODER_A 10
 #define ENCODER_B 9
 
@@ -101,7 +101,7 @@ static void encoder_handler(EC11_Direction dir, void *user_data)
     {
     case MODE1: // 键鼠模式
     {
-        int8_t delta = (dir == EC11_CW) ? 5 : -5;
+        int8_t delta = (dir == EC11_CW) ? 2 : -2;
         if (cfg->encoder_id == 0)
         { // 左编码器控制X轴
             tud_hid_mouse_report(REPORT_ID_MOUSE, 0, delta, 0, 0, 0);
