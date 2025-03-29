@@ -29,6 +29,12 @@ typedef enum
 #define BTN_START 1
 #define BTN_FXR 0
 
+#define ENCODER_A2 8
+#define ENCODER_B2 7
+#define ENCODER_A 10
+#define ENCODER_B 9
+
+
 // 模式选择引脚（原BTA/BTB/BTC）
 #define MODE_PIN_1 BTN_BTA
 #define MODE_PIN_2 BTN_BTB
@@ -178,9 +184,9 @@ int main(void)
 
     // 初始化编码器
     encoder1_cfg.encoder_id = 0;
-    ec11_init(&encoder1, 7, 8, encoder_handler, &encoder1_cfg);
+    ec11_init(&encoder1, ENCODER_A, ENCODER_B, encoder_handler, &encoder1_cfg);
     encoder2_cfg.encoder_id = 1;
-    ec11_init(&encoder2, 9, 10, encoder_handler, &encoder2_cfg);
+    ec11_init(&encoder2, ENCODER_A2, ENCODER_B2, encoder_handler, &encoder2_cfg);
 
     tud_init(BOARD_TUD_RHPORT);
 
@@ -209,7 +215,7 @@ int main(void)
                 }
             }
 
-            if (need_report && (board_millis() - last_hid_report >= 1)) // 最小1ms间隔
+            if (need_report && (board_millis() - last_hid_report >= 1))
             {
                 send_mode_hid_report();
                 last_hid_report = board_millis();
