@@ -7,6 +7,7 @@
 #include "tusb.h"
 #include "usb_descriptors.h"
 #include "ec11.h"
+#include "debounce.h"
 
 //--------------------------------------------------------------------+
 // 模式定义和GPIO配置
@@ -34,6 +35,7 @@ typedef enum
 #define MODE_PIN_3 BTN_BTC
 #define MAIN_LOOP_INTERVAL_US 250 // 250μs = 4kHz
 #define SAMPLING_INTERVAL_US 250  // 4kHz采样率
+#define DEBOUNCE_DELAY_MS 5       // 消抖延时设为5ms
 
 typedef struct
 {
@@ -50,10 +52,12 @@ typedef struct
     bool led_state;       // 当前LED状态
 } LED_Blink_State;
 
+
 static EC11_Encoder encoder1, encoder2;
 static EncoderConfig encoder1_cfg, encoder2_cfg;
 static int16_t joystick_x = 0;
 static int16_t joystick_y = 0;
+static debounce_t btn_debounce[7];
 static volatile bool current_btn_states[7] = {false};
 static volatile bool btn_changed = false;
 static LED_Blink_State led_blink = {0};
@@ -146,6 +150,7 @@ int main(void)
         gpio_init(btn_pins[i]);
         gpio_set_dir(btn_pins[i], GPIO_IN);
         gpio_pull_up(btn_pins[i]);
+        debounce_init(&btn_debounce[i], btn_pins[i]);
     }
 
     // 检测START按钮进入刷写模式
@@ -231,34 +236,6 @@ int main(void)
 }
 
 //--------------------------------------------------------------------+
-// 4kHz采样定时器回调
-//--------------------------------------------------------------------+
-bool timer_callback(repeating_timer_t *rt)
-{
-    static uint32_t last_state_time[7] = {0};
-    const uint32_t debounce_time = 5; // 增加去抖动时间至5ms
-
-    for (int i = 0; i < 7; i++)
-    {
-        bool raw_state = !gpio_get(btn_pins[i]);
-
-        if (raw_state != current_btn_states[i])
-        {
-            if (board_millis() - last_state_time[i] >= debounce_time)
-            {
-                current_btn_states[i] = raw_state;
-                btn_changed = true;
-                last_state_time[i] = board_millis(); // 状态变更时更新时间戳
-            }
-        }
-        else
-        {
-            last_state_time[i] = board_millis(); // 状态稳定时更新时间戳
-        }
-    }
-    return true;
-}
-//--------------------------------------------------------------------+
 // 模式检测函数
 //--------------------------------------------------------------------+
 OperationMode detect_boot_mode(void)
@@ -274,6 +251,20 @@ OperationMode detect_boot_mode(void)
             return (OperationMode)(i + 1); // MODE1~3
     }
     return MODE1; // 默认模式
+}
+
+bool timer_callback(repeating_timer_t *rt) {
+    for (int i = 0; i < 7; i++) {
+        bool has_changed = debounce_read(&btn_debounce[i]);
+        if (has_changed) {
+            bool new_state = btn_debounce[i].stable_state == KEY_ACTIVE_STATE;
+            if (new_state != current_btn_states[i]) {
+                current_btn_states[i] = new_state;
+                btn_changed = true;
+            }
+        }
+    }
+    return true;
 }
 
 //--------------------------------------------------------------------+
@@ -310,10 +301,6 @@ void send_mode_hid_report(void)
         if (btn_states[6])
             keycode[idx++] = HID_KEY_M; // FXR
         tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
-        if (idx == 0)
-        {
-            tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, (uint8_t[6]){0});
-        }
     }
     break;
 
