@@ -69,6 +69,10 @@ static volatile bool btn_changed = false;
 static LED_Blink_State led_blink = {0};
 static uint32_t last_hid_report = 0;
 
+static int16_t remaining_delta_x = 0;
+static int16_t remaining_delta_y = 0;
+static uint32_t last_mouse_report_time = 0;
+
 //--------------------------------------------------------------------+
 // 全局变量
 //--------------------------------------------------------------------+
@@ -99,19 +103,17 @@ static void encoder_handler(EC11_Direction dir, void *user_data)
 
     switch (current_mode)
     {
-    case MODE1: // 键鼠模式
+        case MODE1: // 键鼠模式
     {
-        int8_t delta = (dir == EC11_CW) ? 2 : -2;
-        if (cfg->encoder_id == 0)
-        { // 左编码器控制X轴
-            tud_hid_mouse_report(REPORT_ID_MOUSE, 0, delta, 0, 0, 0);
+        int8_t delta = (dir == EC11_CW) ? 12 : -12;
+        // 累加增量到对应的轴
+        if (cfg->encoder_id == 0) {
+            remaining_delta_x += delta;
+        } else {
+            remaining_delta_y += delta;
         }
-        else
-        { // 右编码器控制Y轴
-            tud_hid_mouse_report(REPORT_ID_MOUSE, 0, 0, delta, 0, 0);
-        }
+        break;
     }
-    break;
 
     case MODE2: // 手柄模式
     {
@@ -221,6 +223,42 @@ int main(void)
                 last_hid_report = board_millis();
             }
         }
+
+        uint32_t current_time = board_millis();
+    if (current_mode == MODE1 && (current_time - last_mouse_report_time) >= 3)
+    {
+        int8_t step_x = 0;
+        int8_t step_y = 0;
+
+        // 计算X轴步长（每次移动2个单位）
+        if (remaining_delta_x != 0)
+        {
+            int16_t step = (remaining_delta_x > 0) ? 3 : -3;
+            if (abs(step) > abs(remaining_delta_x)) {
+                step = remaining_delta_x;
+            }
+            step_x = step;
+            remaining_delta_x -= step;
+        }
+
+        // 计算Y轴步长（每次移动3个单位）
+        if (remaining_delta_y != 0)
+        {
+            int16_t step = (remaining_delta_y > 0) ? 3 : -3;
+            if (abs(step) > abs(remaining_delta_y)) {
+                step = remaining_delta_y;
+            }
+            step_y = step;
+            remaining_delta_y -= step;
+        }
+
+        // 发送鼠标报告
+        if (step_x != 0 || step_y != 0)
+        {
+            tud_hid_mouse_report(REPORT_ID_MOUSE, 0, step_x, step_y, 0, 0);
+            last_mouse_report_time = current_time;
+        }
+    }
 
         // 处理摇杆报告
         if (current_mode == MODE2 &&
