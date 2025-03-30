@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "bsp/board_api.h"
@@ -34,7 +35,6 @@ typedef enum
 #define ENCODER_A 10
 #define ENCODER_B 9
 
-
 // 模式选择引脚（原BTA/BTB/BTC）
 #define MODE_PIN_1 BTN_BTA
 #define MODE_PIN_2 BTN_BTB
@@ -58,7 +58,6 @@ typedef struct
     bool led_state;       // 当前LED状态
 } LED_Blink_State;
 
-
 static EC11_Encoder encoder1, encoder2;
 static EncoderConfig encoder1_cfg, encoder2_cfg;
 static int16_t joystick_x = 0;
@@ -69,8 +68,8 @@ static volatile bool btn_changed = false;
 static LED_Blink_State led_blink = {0};
 static uint32_t last_hid_report = 0;
 
-static int16_t remaining_delta_x = 0;
-static int16_t remaining_delta_y = 0;
+static float remaining_delta_x = 0.0f;
+static float remaining_delta_y = 0.0f;
 static uint32_t last_mouse_report_time = 0;
 
 //--------------------------------------------------------------------+
@@ -103,14 +102,16 @@ static void encoder_handler(EC11_Direction dir, void *user_data)
 
     switch (current_mode)
     {
-        case MODE1: // 键鼠模式
+    case MODE1: // 键鼠模式
     {
-        int8_t delta = (dir == EC11_CW) ? 12 : -12;
-        // 累加增量到对应的轴
-        if (cfg->encoder_id == 0) {
-            remaining_delta_x += delta;
-        } else {
-            remaining_delta_y += delta;
+        float base_delta = (dir == EC11_CW) ? 16.0f : -16.0f;
+        if (cfg->encoder_id == 0)
+        {
+            remaining_delta_x += base_delta;
+        }
+        else
+        {
+            remaining_delta_y += base_delta;
         }
         break;
     }
@@ -225,40 +226,45 @@ int main(void)
         }
 
         uint32_t current_time = board_millis();
-    if (current_mode == MODE1 && (current_time - last_mouse_report_time) >= 3)
-    {
-        int8_t step_x = 0;
-        int8_t step_y = 0;
+        if (current_mode == MODE1 && (current_time - last_mouse_report_time) >= 1) // 保持1ms间隔
+{
+    int8_t step_x = 0;
+    int8_t step_y = 0;
+    const float SMOOTHING_FACTOR = 5.0f; // 5倍平滑
 
-        // 计算X轴步长（每次移动2个单位）
-        if (remaining_delta_x != 0)
-        {
-            int16_t step = (remaining_delta_x > 0) ? 3 : -3;
-            if (abs(step) > abs(remaining_delta_x)) {
-                step = remaining_delta_x;
-            }
-            step_x = step;
-            remaining_delta_x -= step;
+    // X轴处理（浮点运算）
+    if (fabsf(remaining_delta_x) >= 1.0f) {
+        float ideal_step = remaining_delta_x / SMOOTHING_FACTOR;
+        int8_t quantized_step = (int8_t)roundf(ideal_step);
+        
+        // 防止过冲
+        if (fabsf(quantized_step) > fabsf(remaining_delta_x)) {
+            quantized_step = (remaining_delta_x > 0) ? 1 : -1;
         }
-
-        // 计算Y轴步长（每次移动3个单位）
-        if (remaining_delta_y != 0)
-        {
-            int16_t step = (remaining_delta_y > 0) ? 3 : -3;
-            if (abs(step) > abs(remaining_delta_y)) {
-                step = remaining_delta_y;
-            }
-            step_y = step;
-            remaining_delta_y -= step;
-        }
-
-        // 发送鼠标报告
-        if (step_x != 0 || step_y != 0)
-        {
-            tud_hid_mouse_report(REPORT_ID_MOUSE, 0, step_x, step_y, 0, 0);
-            last_mouse_report_time = current_time;
-        }
+        
+        remaining_delta_x -= quantized_step;
+        step_x = quantized_step * 2; // 保持总灵敏度
     }
+
+    // Y轴处理（同上）
+    if (fabsf(remaining_delta_y) >= 1.0f) {
+        float ideal_step = remaining_delta_y / SMOOTHING_FACTOR;
+        int8_t quantized_step = (int8_t)roundf(ideal_step);
+        
+        if (fabsf(quantized_step) > fabsf(remaining_delta_y)) {
+            quantized_step = (remaining_delta_y > 0) ? 1 : -1;
+        }
+        
+        remaining_delta_y -= quantized_step;
+        step_y = quantized_step * 2;
+    }
+
+    // 发送报告
+    if (step_x != 0 || step_y != 0) {
+        tud_hid_mouse_report(REPORT_ID_MOUSE, 0, step_x, step_y, 0, 0);
+        last_mouse_report_time = current_time;
+    }
+}
 
         // 处理摇杆报告
         if (current_mode == MODE2 &&
@@ -297,12 +303,16 @@ OperationMode detect_boot_mode(void)
     return MODE1; // 默认模式
 }
 
-bool timer_callback(repeating_timer_t *rt) {
-    for (int i = 0; i < 7; i++) {
+bool timer_callback(repeating_timer_t *rt)
+{
+    for (int i = 0; i < 7; i++)
+    {
         bool has_changed = debounce_read(&btn_debounce[i]);
-        if (has_changed) {
+        if (has_changed)
+        {
             bool new_state = btn_debounce[i].stable_state == KEY_ACTIVE_STATE;
-            if (new_state != current_btn_states[i]) {
+            if (new_state != current_btn_states[i])
+            {
                 current_btn_states[i] = new_state;
                 btn_changed = true;
             }
