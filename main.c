@@ -1,254 +1,190 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <math.h>
-#include "pico/stdlib.h"
-#include "pico/bootrom.h"
+
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
-#include "ec11.h"
-#include "debounce.h"
+#include "hardware/gpio.h"
+#include "EC11.h"
+#include "math.h"
 
 //--------------------------------------------------------------------+
-// 模式定义和GPIO配置
+// 硬件配置宏定义
 //--------------------------------------------------------------------+
-typedef enum
-{
-    MODE_BOOTLOADER, // 特殊模式：进入刷写模式
-    MODE1,           // 鼠标模式
-    MODE2,           // 键盘模式
-    MODE3            // 手柄模式
-} OperationMode;
 
-// 按钮GPIO定义
-#define BTN_BTA 6
-#define BTN_BTB 5
-#define BTN_BTC 4
-#define BTN_BTD 3
-#define BTN_FXL 2
-#define BTN_START 1
-#define BTN_FXR 0
+// 按钮配置
+#define BUTTON_COUNT           7
+#define BUTTON_0_PIN           0
+#define BUTTON_1_PIN           1
+#define BUTTON_2_PIN           2
+#define BUTTON_3_PIN           3
+#define BUTTON_4_PIN           4
+#define BUTTON_5_PIN           5
+#define BUTTON_6_PIN           6
+static const uint8_t button_pins[BUTTON_COUNT] = {BUTTON_5_PIN,
 
-#define ENCODER_A2 7
-#define ENCODER_B2 8
-#define ENCODER_A 10
-#define ENCODER_B 9
+                            BUTTON_0_PIN,   BUTTON_1_PIN,   BUTTON_2_PIN,   BUTTON_3_PIN,
+                            
+                                        BUTTON_4_PIN,    BUTTON_6_PIN
+};
 
-// 模式选择引脚（原BTA/BTB/BTC）
-#define MODE_PIN_1 BTN_BTA
-#define MODE_PIN_2 BTN_BTB
-#define MODE_PIN_3 BTN_BTC
-#define MAIN_LOOP_INTERVAL_US 250 // 250μs = 4kHz
-#define SAMPLING_INTERVAL_US 250  // 4kHz采样率
-#define DEBOUNCE_DELAY_MS 5       // 消抖延时设为5ms
+// 键码映射
+#define KEYMAP_A               HID_KEY_A
+#define KEYMAP_B               HID_KEY_B
+#define KEYMAP_C               HID_KEY_C
+#define KEYMAP_D               HID_KEY_D
+#define KEYMAP_E               HID_KEY_E
+#define KEYMAP_F               HID_KEY_F
+#define KEYMAP_G               HID_KEY_G
+static const uint8_t keymap[BUTTON_COUNT] = {
+    KEYMAP_A, KEYMAP_B, KEYMAP_C, KEYMAP_D,
+    KEYMAP_E, KEYMAP_F, KEYMAP_G
+};
 
-typedef struct
-{
-    uint8_t encoder_id;
-    uint8_t cw_key;  // 顺时针按键
-    uint8_t ccw_key; // 逆时针按键
-} EncoderConfig;
+// 编码器配置
+#define ENCODER_X_PIN_A        7
+#define ENCODER_X_PIN_B        8
+#define ENCODER_Y_PIN_A        9
+#define ENCODER_Y_PIN_B        10
 
-typedef struct
-{
-    uint32_t next_toggle; // 下一次状态切换时间
-    uint16_t interval;    // 闪烁间隔(ms)
-    uint8_t remain_times; // 剩余切换次数
-    bool led_state;       // 当前LED状态
-} LED_Blink_State;
-
-static EC11_Encoder encoder1, encoder2;
-static EncoderConfig encoder1_cfg, encoder2_cfg;
-static int16_t joystick_x = 0;
-static int16_t joystick_y = 0;
-static debounce_t btn_debounce[7];
-static volatile bool current_btn_states[7] = {false};
-static volatile bool btn_changed = false;
-static LED_Blink_State led_blink = {0};
-static uint32_t last_hid_report = 0;
-
-static float remaining_delta_x = 0.0f;
-static float remaining_delta_y = 0.0f;
-static uint32_t last_mouse_report_time = 0;
+// 鼠标参数
+#define ENCODER_BASE_SENSITIVITY 5       // 编码器基础灵敏度
+#define MOUSE_SENSITIVITY_MULTIPLIER 2   // 鼠标移动倍率
+#define SMOOTHING_FACTOR       5.0f      // 平滑系数（值越大越平滑）
+#define HID_REPORT_INTERVAL_MS 1         // HID报告间隔(ms)
 
 //--------------------------------------------------------------------+
 // 全局变量
 //--------------------------------------------------------------------+
-OperationMode current_mode = MODE1;
-bool boot_mode_done = false;
-uint32_t boot_start_time = 0;
-bool prev_report_btn_state[7] = {false};
-int16_t prev_joystick_x = 0, prev_joystick_y = 0;
+EC11_Encoder encoder_x; // X轴编码器
+EC11_Encoder encoder_y; // Y轴编码器
+
+static int8_t mouse_x = 0;
+static int8_t mouse_y = 0;
+static uint32_t prev_btn_state = 0;
+static float remaining_delta_x = 0.0f;
+static float remaining_delta_y = 0.0f;
+static uint32_t last_mouse_report_time = 0;
+
+void hid_task(void);
 
 //--------------------------------------------------------------------+
-// 函数声明
+// 编码器回调函数
 //--------------------------------------------------------------------+
-OperationMode detect_boot_mode(void);
-void blink_led_pattern_nonblock(uint8_t count, uint16_t interval_ms);
-void update_led_state(void);
-void send_mode_hid_report(void);
-void reinit_mode_pins(void);
-bool timer_callback(repeating_timer_t *rt);
 
-//--------------------------------------------------------------------+
-// 编码器回调
-//---------------------------------------------------------------------
-static void encoder_handler(EC11_Direction dir, void *user_data)
-{
-    if (!tud_hid_ready())
-        return;
-    EncoderConfig *cfg = (EncoderConfig *)user_data;
-
-    switch (current_mode)
-    {
-    case MODE1: // 键鼠模式
-    {
-        float base_delta = (dir == EC11_CW) ? 16.0f : -16.0f;
-        if (cfg->encoder_id == 0)
-        {
-            remaining_delta_x += base_delta;
-        }
-        else
-        {
-            remaining_delta_y += base_delta;
-        }
-        break;
-    }
-
-    case MODE2: // 手柄模式
-    {
-        int16_t delta = (dir == EC11_CW) ? 512 : -512;
-        if (cfg->encoder_id == 0)
-        { // 左编码器控制X轴
-            joystick_x = (joystick_x + delta > 32767) ? 32767 : (joystick_x + delta < -32768) ? -32768
-                                                                                              : joystick_x + delta;
-        }
-        else
-        { // 右编码器控制Y轴
-            joystick_y = (joystick_y + delta > 32767) ? 32767 : (joystick_y + delta < -32768) ? -32768
-                                                                                              : joystick_y + delta;
-        }
-    }
-    break;
-
-    default: // 其他模式保持原有功能
-        if (cfg->cw_key && cfg->ccw_key)
-        {
-            uint8_t key = (dir == EC11_CW) ? cfg->cw_key : cfg->ccw_key;
-            uint8_t keycode[6] = {key};
-            tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
-            tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, (uint8_t[6]){0});
-        }
-    }
+void encoder_x_callback(EC11_Direction dir, void* user_data) {
+    remaining_delta_x += dir * ENCODER_BASE_SENSITIVITY;
 }
 
-const uint btn_pins[] = {BTN_BTA, BTN_BTB, BTN_BTC, BTN_BTD, BTN_FXL, BTN_START, BTN_FXR};
+void encoder_y_callback(EC11_Direction dir, void* user_data) {
+    remaining_delta_y += dir * ENCODER_BASE_SENSITIVITY;
+}
 
 //--------------------------------------------------------------------+
 // 主程序
 //--------------------------------------------------------------------+
+
 int main(void)
 {
+    // 硬件初始化
     board_init();
-    stdio_init_all();
-
-    // 初始化按钮GPIO
-    for (int i = 0; i < 7; i++)
-    {
-        gpio_init(btn_pins[i]);
-        gpio_set_dir(btn_pins[i], GPIO_IN);
-        gpio_pull_up(btn_pins[i]);
-        debounce_init(&btn_debounce[i], btn_pins[i]);
-    }
-
-    // 检测START按钮进入刷写模式
-    if (!gpio_get(BTN_START))
-    {
-        reset_usb_boot(0, 0);
-    }
-
-    // 设置4kHz采样定时器
-    repeating_timer_t timer;
-    add_repeating_timer_us(-SAMPLING_INTERVAL_US, timer_callback, NULL, &timer);
-
-    // 检测启动模式
-    current_mode = detect_boot_mode();
-    reinit_mode_pins();
-    boot_mode_done = true;
-    boot_start_time = board_millis();
-    printf("System Started in Mode: %d\n", current_mode);
-
-    // LED初始化
-    if (current_mode != MODE1)
-        blink_led_pattern_nonblock(3, 200);
-    else
-        board_led_write(true);
-
-    // 初始化编码器
-    encoder1_cfg.encoder_id = 0;
-    ec11_init(&encoder1, ENCODER_A, ENCODER_B, encoder_handler, &encoder1_cfg);
-    encoder2_cfg.encoder_id = 1;
-    ec11_init(&encoder2, ENCODER_A2, ENCODER_B2, encoder_handler, &encoder2_cfg);
-
     tud_init(BOARD_TUD_RHPORT);
 
-    while (1)
+    // 按钮GPIO初始化
+    for (int i = 0; i < BUTTON_COUNT; i++) {
+        gpio_init(button_pins[i]);
+        gpio_set_dir(button_pins[i], GPIO_IN);
+        gpio_pull_up(button_pins[i]);
+    }
+
+    // 编码器初始化
+    ec11_init(&encoder_x, ENCODER_X_PIN_A, ENCODER_X_PIN_B, encoder_x_callback, NULL);
+    ec11_init(&encoder_y, ENCODER_Y_PIN_A, ENCODER_Y_PIN_B, encoder_y_callback, NULL);
+
+    while (1) 
     {
-        uint32_t start_time = time_us_32();
+        tud_task();  // 处理USB事件
+        ec11_update(&encoder_x);
+        ec11_update(&encoder_y);
+        hid_task();
+    }
+}
 
-        tud_task();
-        ec11_update(&encoder1);
-        ec11_update(&encoder2);
+//--------------------------------------------------------------------+
+// HID功能实现
+//--------------------------------------------------------------------+
 
-        // 处理按钮状态变化
-        if (btn_changed)
-        {
-            btn_changed = false;
-            bool need_report = false;
-
-            for (int i = 0; i < 7; i++)
-            {
-                if (current_btn_states[i] != prev_report_btn_state[i])
-                {
-                    prev_report_btn_state[i] = current_btn_states[i];
-                    need_report = true;
-                    if (current_btn_states[i])
-                        blink_led_pattern_nonblock(1, 100);
-                }
-            }
-
-            if (need_report && (board_millis() - last_hid_report >= 1))
-            {
-                send_mode_hid_report();
-                last_hid_report = board_millis();
-            }
-        }
-
-        uint32_t current_time = board_millis();
-        if (current_mode == MODE1 && (current_time - last_mouse_report_time) >= 1) // 保持1ms间隔
+static uint32_t read_buttons(void)
 {
+    uint32_t btn_mask = 0;
+    for (int i = 0; i < BUTTON_COUNT; i++) {
+        if (!gpio_get(button_pins[i])) {
+            btn_mask |= (1 << i);
+        }
+    }
+    return btn_mask;
+}
+
+static void send_hid_report(uint8_t report_id, uint32_t btn)
+{
+    if (!tud_hid_ready()) return;
+
+    if (btn == prev_btn_state) return;
+    prev_btn_state = btn;
+
+    uint8_t keycode[6] = {0};
+    uint8_t key_cnt = 0;
+
+    for (int i = 0; i < BUTTON_COUNT && key_cnt < 6; i++) {
+        if (btn & (1 << i)) {
+            keycode[key_cnt++] = keymap[i];
+        }
+    }
+
+    tud_hid_keyboard_report(report_id, 0, key_cnt ? keycode : NULL);
+}
+
+void hid_task(void)
+{
+    static uint32_t start_ms = 0;
+    const uint32_t current_time = board_millis();
+
+    if (current_time - start_ms < HID_REPORT_INTERVAL_MS) return;
+    start_ms = current_time;
+
+    // 读取按键状态
+    const uint32_t btn_state = read_buttons();
+
+    // 远程唤醒处理
+    if (tud_suspended()) {
+        if (btn_state) tud_remote_wakeup();
+        return;
+    }
+
+    // 发送键盘报告
+    send_hid_report(REPORT_ID_KEYBOARD, btn_state);
+
+    // 处理鼠标移动
     int8_t step_x = 0;
     int8_t step_y = 0;
-    const float SMOOTHING_FACTOR = 5.0f; // 5倍平滑
 
-    // X轴处理（浮点运算）
+    // X轴处理
     if (fabsf(remaining_delta_x) >= 1.0f) {
-        float ideal_step = remaining_delta_x / SMOOTHING_FACTOR;
+        const float ideal_step = remaining_delta_x / SMOOTHING_FACTOR;
         int8_t quantized_step = (int8_t)roundf(ideal_step);
         
-        // 防止过冲
         if (fabsf(quantized_step) > fabsf(remaining_delta_x)) {
             quantized_step = (remaining_delta_x > 0) ? 1 : -1;
         }
         
         remaining_delta_x -= quantized_step;
-        step_x = quantized_step * 2; // 保持总灵敏度
+        step_x = quantized_step * MOUSE_SENSITIVITY_MULTIPLIER;
     }
 
-    // Y轴处理（同上）
+    // Y轴处理
     if (fabsf(remaining_delta_y) >= 1.0f) {
-        float ideal_step = remaining_delta_y / SMOOTHING_FACTOR;
+        const float ideal_step = remaining_delta_y / SMOOTHING_FACTOR;
         int8_t quantized_step = (int8_t)roundf(ideal_step);
         
         if (fabsf(quantized_step) > fabsf(remaining_delta_y)) {
@@ -256,222 +192,52 @@ int main(void)
         }
         
         remaining_delta_y -= quantized_step;
-        step_y = quantized_step * 2;
+        step_y = quantized_step * MOUSE_SENSITIVITY_MULTIPLIER;
     }
 
-    // 发送报告
-    if (step_x != 0 || step_y != 0) {
+    // 发送鼠标报告
+    if ((step_x != 0 || step_y != 0) && tud_hid_ready()) {
         tud_hid_mouse_report(REPORT_ID_MOUSE, 0, step_x, step_y, 0, 0);
-        last_mouse_report_time = current_time;
-    }
-}
-
-        // 处理摇杆报告
-        if (current_mode == MODE2 &&
-            (joystick_x != prev_joystick_x || joystick_y != prev_joystick_y))
-        {
-            prev_joystick_x = joystick_x;
-            prev_joystick_y = joystick_y;
-            send_mode_hid_report();
-        }
-
-        update_led_state();
-
-        // 精确循环间隔控制
-        while ((time_us_32() - start_time) < MAIN_LOOP_INTERVAL_US)
-        {
-            tight_loop_contents();
-        }
     }
 }
 
 //--------------------------------------------------------------------+
-// 模式检测函数
+// USB HID回调函数（保持不变）
 //--------------------------------------------------------------------+
-OperationMode detect_boot_mode(void)
-{
-    bool mode_pins[] = {
-        !gpio_get(MODE_PIN_1),
-        !gpio_get(MODE_PIN_2),
-        !gpio_get(MODE_PIN_3)};
 
-    for (int i = 0; i < 3; i++)
-    {
-        if (mode_pins[i])
-            return (OperationMode)(i + 1); // MODE1~3
-    }
-    return MODE1; // 默认模式
-}
-
-bool timer_callback(repeating_timer_t *rt)
-{
-    for (int i = 0; i < 7; i++)
-    {
-        bool has_changed = debounce_read(&btn_debounce[i]);
-        if (has_changed)
-        {
-            bool new_state = btn_debounce[i].stable_state == KEY_ACTIVE_STATE;
-            if (new_state != current_btn_states[i])
-            {
-                current_btn_states[i] = new_state;
-                btn_changed = true;
-            }
-        }
-    }
-    return true;
-}
-
-//--------------------------------------------------------------------+
-// HID报告发送
-//--------------------------------------------------------------------+
-static uint32_t counter = 0;
-void send_mode_hid_report(void)
-{
-    counter++;
-    if (!boot_mode_done || !tud_hid_ready())
-        return;
-
-    bool btn_states[7];
-    memcpy(btn_states, prev_report_btn_state, sizeof(btn_states));
-
-    switch (current_mode)
-    {
-    case MODE1: // 键鼠模式
-    {
-        uint8_t keycode[6] = {0};
-        uint8_t idx = 0;
-        if (btn_states[0])
-            keycode[idx++] = HID_KEY_D; // BTA
-        if (btn_states[1])
-            keycode[idx++] = HID_KEY_F; // BTB
-        if (btn_states[2])
-            keycode[idx++] = HID_KEY_J; // BTC
-        if (btn_states[3])
-            keycode[idx++] = HID_KEY_K; // BTD
-        if (btn_states[4])
-            keycode[idx++] = HID_KEY_N; // FXL
-        if (btn_states[5])
-            keycode[idx++] = HID_KEY_Y; // START
-        if (btn_states[6])
-            keycode[idx++] = HID_KEY_M; // FXR
-        tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
-    }
-    break;
-
-    case MODE2: // 手柄模式
-    {
-        hid_gamepad_report_t report = {0};
-        // 按钮映射
-        if (btn_states[0])
-            report.buttons |= GAMEPAD_BUTTON_A; // BTA
-        if (btn_states[1])
-            report.buttons |= GAMEPAD_BUTTON_B; // BTB
-        if (btn_states[2])
-            report.buttons |= GAMEPAD_BUTTON_X; // BTC
-        if (btn_states[3])
-            report.buttons |= GAMEPAD_BUTTON_Y; // BTD
-        if (btn_states[4])
-            report.buttons |= GAMEPAD_BUTTON_TL; // FXL
-        if (btn_states[5])
-            report.buttons |= GAMEPAD_BUTTON_START; // START
-        if (btn_states[6])
-            report.buttons |= GAMEPAD_BUTTON_TR; // FXR
-
-        // 摇杆数据
-        report.x = joystick_x;
-        report.y = joystick_y;
-
-        tud_hid_report(REPORT_ID_GAMEPAD, &report, sizeof(report));
-    }
-    break;
-
-    case MODE3: // 手柄模式
-    {
-        hid_gamepad_report_t report = {0};
-        if (btn_states[0])
-            report.buttons |= GAMEPAD_BUTTON_A;
-        if (btn_states[1])
-            report.buttons |= GAMEPAD_BUTTON_B;
-        if (btn_states[2])
-            report.buttons |= GAMEPAD_BUTTON_X;
-        if (btn_states[3])
-            report.buttons |= GAMEPAD_BUTTON_Y;
-        if (btn_states[4])
-            report.buttons |= GAMEPAD_BUTTON_0;
-        if (btn_states[5])
-            report.buttons |= GAMEPAD_BUTTON_START;
-        if (btn_states[6])
-            report.buttons |= GAMEPAD_BUTTON_1;
-        tud_hid_report(REPORT_ID_GAMEPAD, &report, sizeof(report));
-    }
-    break;
-    }
-}
-
-void scanrate_hid_report(void)
-{
-    static uint32_t last_print = 0;
-    uint32_t now = board_millis();
-
-    if (now - last_print >= 1000)
-    {
-        printf("Scan rate: %lu Hz\n", counter);
-        counter = 0;
-        last_print = now;
-    }
-}
-
-//--------------------------------------------------------------------+
-// 引脚重新初始化
-//--------------------------------------------------------------------+
-void reinit_mode_pins(void)
-{
-    for (int pin = MODE_PIN_1; pin <= MODE_PIN_3; pin++)
-    {
-        gpio_init(pin);
-        gpio_set_dir(pin, GPIO_IN);
-        gpio_pull_up(pin);
-    }
-}
-
-//--------------------------------------------------------------------+
-// LED控制函数
-//--------------------------------------------------------------------+
-void blink_led_pattern_nonblock(uint8_t count, uint16_t interval_ms)
-{
-    led_blink.interval = interval_ms;
-    led_blink.remain_times = count * 2; // 每个周期包含亮灭
-    led_blink.next_toggle = board_millis();
-    led_blink.led_state = false; // 初始状态为灭
-    board_led_write(false);      // 立即更新状态
-}
-
-void update_led_state(void)
-{
-    if (led_blink.remain_times > 0 &&
-        (int32_t)(board_millis() - led_blink.next_toggle) >= 0)
-    {
-
-        led_blink.led_state = !led_blink.led_state;
-        board_led_write(led_blink.led_state);
-
-        led_blink.next_toggle += led_blink.interval;
-        led_blink.remain_times--;
-
-        if (led_blink.remain_times == 0)
-        {
-            board_led_write(true); // 结束保持常亮
-        }
-    }
-}
-
-//--------------------------------------------------------------------+
-// USB回调函数
-//--------------------------------------------------------------------+
 void tud_mount_cb(void) {}
 void tud_umount_cb(void) {}
 void tud_suspend_cb(bool remote_wakeup_en) { (void)remote_wakeup_en; }
 void tud_resume_cb(void) {}
-void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_t len) {}
-uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen) { return 0; }
-void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize) {}
+
+void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
+                          hid_report_type_t report_type, uint8_t const* buffer,
+                          uint16_t bufsize)
+{
+    (void)instance;
+    if (report_type == HID_REPORT_TYPE_OUTPUT && 
+        report_id == REPORT_ID_KEYBOARD &&
+        bufsize > 0) 
+    {
+        // 处理LED状态
+    }
+}
+
+uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
+                              hid_report_type_t report_type, uint8_t* buffer,
+                              uint16_t reqlen)
+{
+    (void)instance;
+    (void)report_id;
+    (void)report_type;
+    (void)buffer;
+    (void)reqlen;
+    return 0;
+}
+
+void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len)
+{
+    (void)instance;
+    (void)report;
+    (void)len;
+}

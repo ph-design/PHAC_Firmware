@@ -25,6 +25,9 @@
 #ifndef USB_DESCRIPTORS_H_
 #define USB_DESCRIPTORS_H_
 
+#define EPNUM_HID_KEYBOARD   0x81 // 键盘使用端点0x81
+#define EPNUM_HID_MOUSE      0x82 // 鼠标使用端点0x82
+
 enum
 {
   REPORT_ID_KEYBOARD = 1,
