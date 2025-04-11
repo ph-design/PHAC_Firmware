@@ -16,7 +16,6 @@
 //--------------------------------------------------------------------+
 
 // 按钮配置
-#define KEYMAP_F               HID_KEY_F
 #define BUTTON_COUNT 7
 #define BTN_BTA 6
 #define BTN_BTB 5
