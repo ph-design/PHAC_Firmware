@@ -3,9 +3,8 @@
 #include <string.h>
 #include "bsp/board_api.h"
 #include "tusb.h"
-#include "usb/usb_descriptors.h"
+#include "usb_descriptors.h"
 #include "hardware/gpio.h"
-#include "pico/stdio.h"
 #include "pico/bootrom.h"
 #include "hardware/flash.h"
 #include "drivers/encoder/ec11.h"
@@ -55,7 +54,7 @@ typedef struct {
 #define MOUSE_SENSITIVITY_MULTIPLIER 2   // 鼠标移动倍率
 #define GAMEPAD_SENSITIVITY       10     // Gamepad轴灵敏度
 #define SMOOTHING_FACTOR       5.0f      // 平滑系数
-#define MAIN_LOOP_INTERVAL_US 100         // HID报告间隔
+#define MAIN_LOOP_INTERVAL_MS 0.1         // HID报告间隔
 
 
 // 键码映射
@@ -136,7 +135,6 @@ int main(void)
     // 硬件初始化
     board_init();
     tud_init(BOARD_TUD_RHPORT);
-    stdio_uart_init_full(uart0, 115200, 19, 16); // GPIO0(TX), GPIO1(RX)
     current_mode = load_system_mode();
 
     // 按钮GPIO初始化
@@ -171,54 +169,12 @@ int main(void)
     ec11_init(&encoder_x, ENCODER_X_PIN_A, ENCODER_X_PIN_B, encoder_x_callback, NULL);
     ec11_init(&encoder_y, ENCODER_Y_PIN_A, ENCODER_Y_PIN_B, encoder_y_callback, NULL);
 
-    inline uint32_t time_since(uint32_t ref) {
-        return time_us_32() - ref; // 自动处理32位溢出
-    }
-    
-    while (1) {
-        uint32_t loop_start = time_us_32();
-        
-        // 移出测量范围的系统任务
-        tud_task(); 
-        
-        // 实际测量开始
-        uint32_t task_start = time_us_32();
+    while (1) 
+    {
+        tud_task();  // 处理USB事件
         ec11_update(&encoder_x);
         ec11_update(&encoder_y);
-        uint32_t after_encoders = time_us_32();
-        
-        hid_task();
-        uint32_t after_hid = time_us_32();
-        
-        // 计算耗时
-        uint32_t encoder_duration = after_encoders - task_start;
-        uint32_t hid_duration = after_hid - after_encoders;
-    
-        // 累计统计（改用浮点）
-        static float tud_avg = 0, encoder_avg = 0, hid_avg = 0;
-        static uint32_t sample_count = 0;
-        const float alpha = 0.1f; // 指数平滑系数
-        
-        tud_avg = tud_avg*(1-alpha) + (task_start - loop_start)*alpha;
-        encoder_avg = encoder_avg*(1-alpha) + encoder_duration*alpha;
-        hid_avg = hid_avg*(1-alpha) + hid_duration*alpha;
-        sample_count++;
-    
-        // 1秒间隔输出（带溢出保护）
-        static uint32_t last_print = 0;
-        if (time_since(last_print) >= 1000000) {
-            printf("Avg Times (us):\n"
-                   "System: %.1f\nEncoders: %.1f\nHID: %.1f\nSamples: %lu\n\n",
-                   tud_avg, encoder_avg, hid_avg, sample_count);
-            
-            last_print = time_us_32();
-            sample_count = 0;
-        }
-    
-        // 精确循环间隔控制
-        while (time_since(loop_start) < MAIN_LOOP_INTERVAL_US) {
-            __wfe(); // 进入低功耗等待
-        }
+        hid_task();  // 处理HID报告
     }
 }
 
@@ -330,11 +286,11 @@ static void handle_gamepad_mode(uint32_t btn_state) {
 
 void hid_task(void)
 {
-    static uint32_t start_us = 0;
+    static uint32_t start_ms = 0;
     const uint32_t current_time = board_millis();
 
-    if (current_time - start_us < MAIN_LOOP_INTERVAL_US) return;
-    start_us = current_time;
+    if (current_time - start_ms < MAIN_LOOP_INTERVAL_MS) return;
+    start_ms = current_time;
 
     const uint32_t btn_state = read_buttons();
 
