@@ -1,35 +1,43 @@
-#include "debounce.h" // 添加对应的头文件
+#include "debounce.h"
+#include "bsp/board_api.h"
 
-void debounce_init(debounce_t *key, uint gpio_pin) {
-    // 初始化GPIO为输入模式（需添加）
-    gpio_init(gpio_pin);
-    gpio_set_dir(gpio_pin, GPIO_IN);
-    gpio_pull_up(gpio_pin);
-    key->gpio_pin = gpio_pin;
-    key->last_state = gpio_get(gpio_pin);
-    key->stable_state = key->last_state;
-    key->last_time = get_absolute_time();
+void debounce_init(DebounceButton* buttons, const uint8_t* pins, uint8_t count) {
+    for (uint8_t i = 0; i < count; i++) {
+        buttons[i].pin = pins[i];
+        buttons[i].stable_state = gpio_get(pins[i]);
+        buttons[i].last_state = buttons[i].stable_state;
+        buttons[i].last_time = board_millis();
+        
+        gpio_init(pins[i]);
+        gpio_set_dir(pins[i], GPIO_IN);
+        gpio_pull_up(pins[i]);
+    }
 }
 
-bool debounce_read(debounce_t *key) {
-    bool current_state = gpio_get(key->gpio_pin);
-    absolute_time_t now = get_absolute_time();
-    int64_t diff_us = absolute_time_diff_us(key->last_time, now);
-
-    /* 检测到状态变化时更新时间戳 */
-    if (current_state != key->last_state) {
-        key->last_time = now;
-        key->last_state = current_state;
-        return false;
-    }
-
-    /* 稳定状态判断：当状态保持时间超过消抖延时 */
-    if (diff_us >= (DEBOUNCE_DELAY_MS * 1000)) {
-        /* 仅当稳定状态与之前记录的不同时返回 true */
-        if (current_state != key->stable_state) {
-            key->stable_state = current_state;
-            return true; // 状态变化（按下或释放）
+void debounce_update(DebounceButton* buttons, uint8_t count) {
+    const uint32_t now = board_millis();
+    
+    for (uint8_t i = 0; i < count; i++) {
+        DebounceButton* btn = &buttons[i];
+        const uint8_t current_state = gpio_get(btn->pin);
+        
+        if (current_state != btn->last_state) {
+            btn->last_state = current_state;
+            btn->last_time = now;
+        }
+        
+        if ((now - btn->last_time) > DEBOUNCE_TIME_MS) {
+            btn->stable_state = current_state;
         }
     }
-    return false;
+}
+
+uint32_t debounce_get_states(DebounceButton* buttons, uint8_t count) {
+    uint32_t states = 0;
+    for (uint8_t i = 0; i < count; i++) {
+        if (!buttons[i].stable_state) {  // 低电平有效
+            states |= (1 << i);
+        }
+    }
+    return states;
 }

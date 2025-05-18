@@ -8,12 +8,17 @@
 #include "pico/bootrom.h"
 #include "hardware/flash.h"
 #include "drivers/encoder/ec11.h"
+#include "drivers/debounce/debounce.h"
 #include "math.h"
 
 
 //--------------------------------------------------------------------+
 // 硬件配置宏定义
 //--------------------------------------------------------------------+
+
+//消抖5ms
+#undef DEBOUNCE_TIME_MS
+#define DEBOUNCE_TIME_MS 2000  
 
 // 按钮配置
 #define BUTTON_COUNT 7
@@ -87,6 +92,7 @@ static const uint8_t KEYMAP_GAMEPAD_MODE[BUTTON_COUNT] = {
 // 全局变量
 //--------------------------------------------------------------------+
 EC11_Encoder encoder_x, encoder_y;
+DebounceButton debounce_buttons[BUTTON_COUNT];
 
 static int8_t mouse_x = 0;
 static int8_t mouse_y = 0;
@@ -138,11 +144,8 @@ int main(void)
     current_mode = load_system_mode();
 
     // 按钮GPIO初始化
-    for (int i = 0; i < BUTTON_COUNT; i++) {
-        gpio_init(button_pins[i]);
-        gpio_set_dir(button_pins[i], GPIO_IN);
-        gpio_pull_up(button_pins[i]);
-    }
+
+    debounce_init(debounce_buttons, button_pins, BUTTON_COUNT);
 
     sleep_ms(10); // 消抖
     bool mode_changed = false;
@@ -174,6 +177,7 @@ int main(void)
         tud_task();  // 处理USB事件
         ec11_update(&encoder_x);
         ec11_update(&encoder_y);
+        debounce_update(debounce_buttons, BUTTON_COUNT);
         hid_task();  // 处理HID报告
     }
 }
@@ -181,15 +185,8 @@ int main(void)
 //--------------------------------------------------------------------+
 // HID功能实现
 //---------------------------------------------------------------------
-static uint32_t read_buttons(void)
-{
-    uint32_t btn_mask = 0;
-    for (int i = 0; i < BUTTON_COUNT; i++) {
-        if (!gpio_get(button_pins[i])) {
-            btn_mask |= (1 << i);
-        }
-    }
-    return btn_mask;
+static uint32_t read_buttons(void) {
+    return debounce_get_states(debounce_buttons, BUTTON_COUNT);
 }
 
 static void send_keyboard_report(uint32_t btn)
