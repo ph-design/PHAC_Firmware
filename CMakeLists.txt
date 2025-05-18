@@ -41,9 +41,9 @@ add_executable(PHAC-Firmware)
 
 target_sources(PHAC-Firmware PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/main.c
-        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
-        ${CMAKE_CURRENT_LIST_DIR}/ec11.c
-        ${CMAKE_CURRENT_LIST_DIR}/debounce.c
+        usb/usb_descriptors.c
+        drivers/encoder/ec11.c
+        drivers/debounce/debounce.c
         )
 
 # Make sure TinyUSB can find tusb_config.h
