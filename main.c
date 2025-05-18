@@ -7,8 +7,8 @@
 #include "hardware/gpio.h"
 #include "pico/bootrom.h"
 #include "hardware/flash.h"
-#include "drivers/encoder/ec11.h"
-#include "drivers/debounce/debounce.h"
+#include "modules/encoder/ec11.h"
+#include "modules/debounce/debounce.h"
 #include "math.h"
 
 
@@ -16,9 +16,9 @@
 // 硬件配置宏定义
 //--------------------------------------------------------------------+
 
-//消抖5ms
+//消抖默认5ms
 #undef DEBOUNCE_TIME_MS
-#define DEBOUNCE_TIME_MS 2000  
+#define DEBOUNCE_TIME_MS 5
 
 // 按钮配置
 #define BUTTON_COUNT 7
@@ -64,12 +64,17 @@ typedef struct {
 
 // 键码映射
 static const uint8_t button_pins[BUTTON_COUNT] = {
-    BTN_BTA, BTN_BTB, BTN_BTC, BTN_BTD,
-    BTN_FXL, BTN_START, BTN_FXR
+    BTN_BTA,
+    BTN_BTB,
+    BTN_BTC,
+    BTN_BTD,
+    BTN_FXL,
+    BTN_START,
+    BTN_FXR
 };
 
 static const uint8_t KEYMAP_MOUSE_MODE[BUTTON_COUNT] = {
-    HID_KEY_D,   // BTN_BTAmn
+    HID_KEY_D,   // BTN_BTA
     HID_KEY_F,   // BTN_BTB
     HID_KEY_J,   // BTN_BTC
     HID_KEY_K,   // BTN_BTD
