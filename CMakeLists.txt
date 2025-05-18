@@ -41,14 +41,12 @@ add_executable(PHAC-Firmware)
 
 target_sources(PHAC-Firmware PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/main.c
-        usb/usb_descriptors.c
-        modules/encoder/ec11.c
-        modules/debounce/debounce.c
+        usb_descriptors.c
         )
 
 # Make sure TinyUSB can find tusb_config.h
 target_include_directories(PHAC-Firmware PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}/usb)
+        ${CMAKE_CURRENT_LIST_DIR})
 
 # In addition to pico_stdlib required for common PicoSDK functionality, add dependency on tinyusb_device
 # for TinyUSB device support and tinyusb_board for the additional board support library used by the example
