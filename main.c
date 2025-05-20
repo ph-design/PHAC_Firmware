@@ -144,6 +144,7 @@
    (void) report_type;
    (void) buffer;
    (void) reqlen;
+   blink_interval_ms = 10; // suspend LED blinking
  
    return 0;
  }
@@ -151,33 +152,41 @@
  // Invoked when received SET_REPORT control request or
  // received data on OUT endpoint ( Report ID = 0, Type = 0 )
  void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize)
- {
-     // This example doesn't use multiple report and report ID
-     (void) itf;
-     (void) report_id;
-     (void) report_type;
- 
-     // 创建64字节响应缓冲区（根据HID报告描述符要求）
-     uint8_t response[64] = {0};
- 
-     // 定义固定字符串
-     const char prefix[] = "received:";
-     const char suffix[] = " greeting from pico!";
-     const uint8_t prefix_len = sizeof(prefix) - 1;  // 8 bytes ("received:")
-     const uint8_t suffix_len = sizeof(suffix) - 1;  // 18 bytes (" greeting from pico!")
- 
-     // 计算可用数据空间
-     const uint16_t max_data_len = sizeof(response) - prefix_len - suffix_len;
-     const uint16_t data_len = bufsize > max_data_len ? max_data_len : bufsize;
- 
-     // 构造响应数据
-     memcpy(response, prefix, prefix_len);                      // 前导字符串
-     memcpy(response + prefix_len, buffer, data_len);           // 原始数据（自动截断）
-     memcpy(response + prefix_len + data_len, suffix, suffix_len); // 后缀字符串
- 
-     // 将响应发送回主机
-     tud_hid_report(0, response, sizeof(response));
- }
+{
+    (void) itf;
+    (void) report_id;
+    (void) report_type;
+
+    // 创建64字节响应缓冲区
+    uint8_t response[64] = {0};
+    const char prefix[] = "received:";
+    const char suffix[] = " greeting from pico!";
+    const uint8_t prefix_len = sizeof(prefix) - 1;
+    const uint8_t suffix_len = sizeof(suffix) - 1;
+    const uint16_t max_data_len = sizeof(response) - prefix_len - suffix_len;
+    const uint16_t data_len = bufsize > max_data_len ? max_data_len : bufsize;
+
+    // 解析接收数据
+    char cmd[64] = {0};
+    memcpy(cmd, buffer, bufsize < 63 ? bufsize : 63); // 保留最后一个字节为\0
+
+    // 检测频率设置指令（格式："freq:500"）
+    if (strncmp(cmd, "freq:", 5) == 0) {
+        int freq = atoi(cmd + 5);
+        if (freq >= 100 && freq <= 5000) { // 限制合理范围
+            blink_interval_ms = freq;
+            snprintf((char*)response, sizeof(response), "Frequency set to %dms", freq);
+            tud_hid_report(0, response, sizeof(response));
+            return;
+        }
+    }
+
+    // 常规回显处理
+    memcpy(response, prefix, prefix_len);
+    memcpy(response + prefix_len, buffer, data_len);
+    memcpy(response + prefix_len + data_len, suffix, suffix_len);
+    tud_hid_report(0, response, sizeof(response));
+}
  
  //--------------------------------------------------------------------+
  // BLINKING TASK
