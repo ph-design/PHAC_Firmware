@@ -368,41 +368,26 @@ void tud_umount_cb(void) {}
 void tud_suspend_cb(bool remote_wakeup_en) { (void)remote_wakeup_en; }
 void tud_resume_cb(void) {}
 
-void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
-                          hid_report_type_t report_type, uint8_t const* buffer,
-                          uint16_t bufsize)
+void tud_hid_set_report_cb(
+    uint8_t instance,
+    uint8_t report_id,
+    hid_report_type_t report_type,
+    uint8_t const *buffer,
+    uint16_t bufsize)
 {
     (void)instance;
-    (void) report_id;
-    (void) report_type;
-        // 创建64字节响应缓冲区
-    uint8_t response[64] = {0};
-    const char prefix[] = "received:";
-    const char suffix[] = " greeting from pico!";
-    const uint8_t prefix_len = sizeof(prefix) - 1;
-    const uint8_t suffix_len = sizeof(suffix) - 1;
-    const uint16_t max_data_len = sizeof(response) - prefix_len - suffix_len;
-    const uint16_t data_len = bufsize > max_data_len ? max_data_len : bufsize;
+    (void)report_id;
+    (void)report_type;
 
-    // 解析接收数据
-    char cmd[64] = {0};
-    memcpy(cmd, buffer, bufsize < 63 ? bufsize : 63); // 保留最后一个字节为\0
-
-    // 检测频率设置指令（格式："freq:500"）
-    if (strncmp(cmd, "freq:", 5) == 0) {
-        int freq = atoi(cmd + 5);
-        if (freq >= 100 && freq <= 5000) { // 限制合理范围
-            blink_interval_ms = freq;
-            snprintf((char*)response, sizeof(response), "Frequency set to %dms", freq);
-            tud_hid_report(0, response, sizeof(response));
-            return;
-        }
+    // 打印接收到的数据
+    printf("Received %d bytes:\n", bufsize);
+    for (int i = 0; i < bufsize; i++)
+    {
+        printf("%02X ", buffer[i]);
+        if ((i + 1) % 16 == 0)
+            printf("\n"); // 每16字节换行
     }
-    // 常规回显处理
-    memcpy(response, prefix, prefix_len);
-    memcpy(response + prefix_len, buffer, data_len);
-    memcpy(response + prefix_len + data_len, suffix, suffix_len);
-    tud_hid_report(REPORT_ID_KEYBOARD, response, sizeof(response));
+    printf("\n\n");
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
