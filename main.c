@@ -54,6 +54,16 @@ typedef struct {
     SystemMode mode;
 } SystemConfig;
 
+enum  {
+  BLINK_NOT_MOUNTED = 250,
+  BLINK_MOUNTED = 1000,
+  BLINK_SUSPENDED = 2500,
+};
+ static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
+
+ void led_blinking_task(void);
+
+
 // 鼠标参数
 #define ENCODER_BASE_SENSITIVITY 5       // 编码器基础灵敏度
 #define MOUSE_SENSITIVITY_MULTIPLIER 2   // 鼠标移动倍率
@@ -145,7 +155,14 @@ int main(void)
 {
     // 硬件初始化
     board_init();
-    tud_init(BOARD_TUD_RHPORT);
+      tusb_rhport_init_t dev_init = {
+      .role = TUSB_ROLE_DEVICE,
+      .speed = TUSB_SPEED_AUTO
+    };
+    tusb_init(BOARD_TUD_RHPORT, &dev_init);
+    if (board_init_after_tusb) {
+     board_init_after_tusb();
+   }
     current_mode = load_system_mode();
 
     // 按钮GPIO初始化
@@ -180,10 +197,12 @@ int main(void)
     while (1) 
     {
         tud_task();  // 处理USB事件
+        led_blinking_task();
         ec11_update(&encoder_x);
         ec11_update(&encoder_y);
         debounce_update(debounce_buttons, BUTTON_COUNT);
         hid_task();  // 处理HID报告
+        
     }
 }
 
@@ -342,7 +361,9 @@ void save_system_mode(SystemMode mode) {
 //--------------------------------------------------------------------+
 // USB HID回调函数
 //---------------------------------------------------------------------
-void tud_mount_cb(void) {}
+void tud_mount_cb(void) {
+     blink_interval_ms = BLINK_MOUNTED;
+}
 void tud_umount_cb(void) {}
 void tud_suspend_cb(bool remote_wakeup_en) { (void)remote_wakeup_en; }
 void tud_resume_cb(void) {}
@@ -352,12 +373,36 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                           uint16_t bufsize)
 {
     (void)instance;
-    if (report_type == HID_REPORT_TYPE_OUTPUT && 
-        report_id == REPORT_ID_KEYBOARD &&
-        bufsize > 0) 
-    {
-        // 处理LED状态
+    (void) report_id;
+    (void) report_type;
+        // 创建64字节响应缓冲区
+    uint8_t response[64] = {0};
+    const char prefix[] = "received:";
+    const char suffix[] = " greeting from pico!";
+    const uint8_t prefix_len = sizeof(prefix) - 1;
+    const uint8_t suffix_len = sizeof(suffix) - 1;
+    const uint16_t max_data_len = sizeof(response) - prefix_len - suffix_len;
+    const uint16_t data_len = bufsize > max_data_len ? max_data_len : bufsize;
+
+    // 解析接收数据
+    char cmd[64] = {0};
+    memcpy(cmd, buffer, bufsize < 63 ? bufsize : 63); // 保留最后一个字节为\0
+
+    // 检测频率设置指令（格式："freq:500"）
+    if (strncmp(cmd, "freq:", 5) == 0) {
+        int freq = atoi(cmd + 5);
+        if (freq >= 100 && freq <= 5000) { // 限制合理范围
+            blink_interval_ms = freq;
+            snprintf((char*)response, sizeof(response), "Frequency set to %dms", freq);
+            tud_hid_report(0, response, sizeof(response));
+            return;
+        }
     }
+    // 常规回显处理
+    memcpy(response, prefix, prefix_len);
+    memcpy(response + prefix_len, buffer, data_len);
+    memcpy(response + prefix_len + data_len, suffix, suffix_len);
+    tud_hid_report(REPORT_ID_KEYBOARD, response, sizeof(response));
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
@@ -369,6 +414,7 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
     (void)report_type;
     (void)buffer;
     (void)reqlen;
+    blink_interval_ms = 70;
     return 0;
 }
 
@@ -378,3 +424,16 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_
     (void)report;
     (void)len;
 }
+
+ void led_blinking_task(void)
+ {
+   static uint32_t start_ms = 0;
+   static bool led_state = false;
+ 
+   // Blink every interval ms
+   if ( board_millis() - start_ms < blink_interval_ms) return; // not enough time
+   start_ms += blink_interval_ms;
+ 
+   board_led_write(led_state);
+   led_state = 1 - led_state; // toggle
+ }
