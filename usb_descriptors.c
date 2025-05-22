@@ -157,12 +157,12 @@ enum
 char const *string_desc_arr[] =
     {
         (const char[]){0x09, 0x04}, // 0: is supported language is English (0x0409)
-        "TinyUSB",                  // 1: Manufacturer
-        "TinyUSB Device",           // 2: Product
+        "PHDesign",                 // 1: Manufacturer
+        "PHAC_V1",                     // 2: Product
         NULL,                       // 3: Serials will use unique ID if possible
-        "Keyboard Interface",       // 4: Interface 1 String
-        "Mouse Interface",          // 5: Interface 2 String
-        "Generic HID Interface",    // 6: Interface 3 String
+        NULL,                       // 4: Interface 1 String
+        NULL,                       // 5: Interface 2 String
+        "PHDesign PHAC Interface",  // 6: Interface 3 String
 };
 
 static uint16_t _desc_str[32 + 1];

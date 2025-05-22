@@ -218,13 +218,32 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
 
   if (itf == ITF_GENERIC)
   {
-    // Store received data to echo back
+    const char *prefix = "pico received: ";
+    size_t prefix_len = strlen(prefix); // 计算前缀长度
+    size_t total_available = sizeof(received_data);
+
+    // 确定实际可复制的前缀长度
+    size_t prefix_copy_len = (prefix_len <= total_available) ? prefix_len : total_available;
+
+    // 剩余空间用于数据部分
+    size_t data_available = total_available - prefix_copy_len;
+    size_t data_copy_size = (bufsize <= data_available) ? bufsize : data_available;
+
+    // 更新接收数据的总大小
+    received_size = prefix_copy_len + data_copy_size;
+
+    // 复制前缀到接收缓冲区
+    memcpy(received_data, prefix, prefix_copy_len);
+
+    // 复制数据部分到前缀之后
+    if (data_copy_size > 0)
+    {
+      memcpy(received_data + prefix_copy_len, buffer, data_copy_size);
+    }
+
     received_report_id = report_id;
     received_itf = itf;
-    received_size = bufsize > sizeof(received_data) ? sizeof(received_data) : bufsize;
-    memcpy(received_data, buffer, received_size);
     send_response = true;
-    
   }
 }
 
