@@ -1,424 +1,220 @@
+/*
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2019 Ha Thach (tinyusb.org)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+
 #include "bsp/board_api.h"
 #include "tusb.h"
-#include "usb_descriptors.h"
-#include "hardware/gpio.h"
-#include "pico/bootrom.h"
-#include "hardware/flash.h"
-#include "modules/encoder/ec11.h"
-#include "modules/debounce/debounce.h"
-#include "math.h"
-
 
 //--------------------------------------------------------------------+
-// 硬件配置宏定义
+// MACRO CONSTANT TYPEDEF PROTYPES
 //--------------------------------------------------------------------+
 
-//消抖默认5ms
-#undef DEBOUNCE_TIME_MS
-#define DEBOUNCE_TIME_MS 5
+// Interface index depends on the order in configuration descriptor
+enum
+{
+  ITF_KEYBOARD = 0,
+  ITF_MOUSE = 1
+};
 
-// 按钮配置
-#define BUTTON_COUNT 7
-#define BTN_BTA 6
-#define BTN_BTB 5
-#define BTN_BTC 4
-#define BTN_BTD 3
-#define BTN_FXL 2
-#define BTN_START 1
-#define BTN_FXR 0
-
-// 编码器配置
-#define ENCODER_X_PIN_A        10
-#define ENCODER_X_PIN_B        9
-#define ENCODER_Y_PIN_A        7
-#define ENCODER_Y_PIN_B        8
-
-//定义flash存储区
-#define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
-#define FLASH_CONFIG_MAGIC 0xABCD1234
-
-#define CLAMP(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
-
-// 模式定义
-typedef enum {
-    MODE_BOOTLOADER,
-    MODE_KEYBOARD_MOUSE,
-    MODE_GAMEPAD
-} SystemMode;
-
-typedef struct {
-    uint32_t magic;
-    SystemMode mode;
-} SystemConfig;
-
-enum  {
+/* Blink pattern
+ * - 250 ms  : device not mounted
+ * - 1000 ms : device mounted
+ * - 2500 ms : device is suspended
+ */
+enum
+{
   BLINK_NOT_MOUNTED = 250,
   BLINK_MOUNTED = 1000,
   BLINK_SUSPENDED = 2500,
 };
- static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
- void led_blinking_task(void);
+static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
-
-// 鼠标参数
-#define ENCODER_BASE_SENSITIVITY 5       // 编码器基础灵敏度
-#define MOUSE_SENSITIVITY_MULTIPLIER 2   // 鼠标移动倍率
-#define GAMEPAD_SENSITIVITY       10     // Gamepad轴灵敏度
-#define SMOOTHING_FACTOR       5.0f      // 平滑系数
-#define MAIN_LOOP_INTERVAL_MS 0.1         // HID报告间隔
-
-
-// 键码映射
-static const uint8_t button_pins[BUTTON_COUNT] = {
-    BTN_BTA,
-    BTN_BTB,
-    BTN_BTC,
-    BTN_BTD,
-    BTN_FXL,
-    BTN_START,
-    BTN_FXR
-};
-
-static const uint8_t KEYMAP_MOUSE_MODE[BUTTON_COUNT] = {
-    HID_KEY_D,   // BTN_BTA
-    HID_KEY_F,   // BTN_BTB
-    HID_KEY_J,   // BTN_BTC
-    HID_KEY_K,   // BTN_BTD
-    HID_KEY_N,   // BTN_FXL
-    HID_KEY_Y,   // BTN_START
-    HID_KEY_M    // BTN_FXR
-};
-
-static const uint8_t KEYMAP_GAMEPAD_MODE[BUTTON_COUNT] = {
-    0,  // BTN_BTA -> Button 1
-    1,  // BTN_BTB -> Button 2
-    2,  // BTN_BTC -> Button 3
-    3,  // BTN_BTD -> Button 4
-    4,  // BTN_FXL -> Button 5
-    5,  // BTN_START -> Button 6
-    6   // BTN_FXR -> Button 7
-};
-
-//--------------------------------------------------------------------+
-// 全局变量
-//--------------------------------------------------------------------+
-EC11_Encoder encoder_x, encoder_y;
-DebounceButton debounce_buttons[BUTTON_COUNT];
-
-static int8_t mouse_x = 0;
-static int8_t mouse_y = 0;
-
-static uint16_t gamepad_x = 0;
-static uint16_t gamepad_y = 0;
-
-static uint32_t prev_btn_state = 0;
-
-static float remaining_delta_x = 0.0f;
-static float remaining_delta_y = 0.0f;
-
-static SystemMode current_mode = MODE_KEYBOARD_MOUSE;
-
-//--------------------------------------------------------------------+
-// 编码器回调函数
-//---------------------------------------------------------------------
-void encoder_x_callback(EC11_Direction dir, void* user_data) {
-    if (current_mode == MODE_GAMEPAD) {
-        gamepad_x = (gamepad_x + dir * GAMEPAD_SENSITIVITY) % 512; // 512为循环周期（2圈）
-    } else {
-        remaining_delta_x += dir * ENCODER_BASE_SENSITIVITY;
-    }
-}
-
-void encoder_y_callback(EC11_Direction dir, void* user_data) {
-    if (current_mode == MODE_GAMEPAD) {
-        gamepad_y = (gamepad_y + dir * GAMEPAD_SENSITIVITY) % 512;
-    } else {
-        remaining_delta_y += dir * ENCODER_BASE_SENSITIVITY;
-    }
-}
-
+void led_blinking_task(void);
 void hid_task(void);
-static void send_keyboard_report(uint32_t btn);
 
-SystemMode load_system_mode(void);
-void save_system_mode(SystemMode mode);
-
-
-//--------------------------------------------------------------------+
-// 主程序
-//---------------------------------------------------------------------
+/*------------- MAIN -------------*/
 int main(void)
 {
-    // 硬件初始化
-    board_init();
-      tusb_rhport_init_t dev_init = {
+  board_init();
+
+  // init device stack on configured roothub port
+  tusb_rhport_init_t dev_init = {
       .role = TUSB_ROLE_DEVICE,
-      .speed = TUSB_SPEED_AUTO
-    };
-    tusb_init(BOARD_TUD_RHPORT, &dev_init);
-    if (board_init_after_tusb) {
-     board_init_after_tusb();
-   }
-    current_mode = load_system_mode();
+      .speed = TUSB_SPEED_AUTO};
+  tusb_init(BOARD_TUD_RHPORT, &dev_init);
 
-    // 按钮GPIO初始化
+  if (board_init_after_tusb)
+  {
+    board_init_after_tusb();
+  }
 
-    debounce_init(debounce_buttons, button_pins, BUTTON_COUNT);
+  while (1)
+  {
+    tud_task(); // tinyusb device task
+    led_blinking_task();
 
-    sleep_ms(10); // 消抖
-    bool mode_changed = false;
-    SystemMode new_mode = current_mode;
-
-    if (!gpio_get(BTN_START)) {
-        reset_usb_boot(0, 0); // 进入Bootloader不保存模式
-    } else {
-        if (!gpio_get(BTN_BTA)) {
-            new_mode = MODE_KEYBOARD_MOUSE;
-            mode_changed = true;
-        } else if (!gpio_get(BTN_BTB)) {
-            new_mode = MODE_GAMEPAD;
-            mode_changed = true;
-        }
-
-        if (mode_changed && new_mode != current_mode) {
-            current_mode = new_mode;
-            save_system_mode(current_mode); // 保存新模式
-        }
-    }
-
-    // 编码器初始化
-    ec11_init(&encoder_x, ENCODER_X_PIN_A, ENCODER_X_PIN_B, encoder_x_callback, NULL);
-    ec11_init(&encoder_y, ENCODER_Y_PIN_A, ENCODER_Y_PIN_B, encoder_y_callback, NULL);
-
-    while (1) 
-    {
-        tud_task();  // 处理USB事件
-        led_blinking_task();
-        ec11_update(&encoder_x);
-        ec11_update(&encoder_y);
-        debounce_update(debounce_buttons, BUTTON_COUNT);
-        hid_task();  // 处理HID报告
-        
-    }
+    hid_task();
+  }
 }
 
 //--------------------------------------------------------------------+
-// HID功能实现
-//---------------------------------------------------------------------
-static uint32_t read_buttons(void) {
-    return debounce_get_states(debounce_buttons, BUTTON_COUNT);
-}
+// Device callbacks
+//--------------------------------------------------------------------+
 
-static void send_keyboard_report(uint32_t btn)
+// Invoked when device is mounted
+void tud_mount_cb(void)
 {
-    if (!tud_hid_ready()) return;
-
-    static uint32_t prev_btn_state = 0;
-    if (btn == prev_btn_state) return;
-    prev_btn_state = btn;
-
-    uint8_t keycode[6] = {0};
-    uint8_t key_cnt = 0;
-
-    for (int i = 0; i < BUTTON_COUNT && key_cnt < 6; i++) {
-        if (btn & (1 << i)) {
-            keycode[key_cnt++] = KEYMAP_MOUSE_MODE[i];
-        }
-    }
-    tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, key_cnt ? keycode : NULL);
+  blink_interval_ms = BLINK_MOUNTED;
 }
 
-
-static void handle_keyboard_mouse_mode(uint32_t btn_state) {
-    // 发送键盘报告
-    send_keyboard_report(btn_state);
-
-    // 处理鼠标移动
-    int8_t step_x = 0;
-    int8_t step_y = 0;
-
-    // X轴处理
-    if (fabsf(remaining_delta_x) >= 1.0f) {
-        const float ideal_step = remaining_delta_x / SMOOTHING_FACTOR;
-        int8_t quantized_step = (int8_t)roundf(ideal_step);
-        
-        if (fabsf(quantized_step) > fabsf(remaining_delta_x)) {
-            quantized_step = (remaining_delta_x > 0) ? 1 : -1;
-        }
-        
-        remaining_delta_x -= quantized_step;
-        step_x = quantized_step * MOUSE_SENSITIVITY_MULTIPLIER;
-    }
-
-    // Y轴处理
-    if (fabsf(remaining_delta_y) >= 1.0f) {
-        const float ideal_step = remaining_delta_y / SMOOTHING_FACTOR;
-        int8_t quantized_step = (int8_t)roundf(ideal_step);
-        
-        if (fabsf(quantized_step) > fabsf(remaining_delta_y)) {
-            quantized_step = (remaining_delta_y > 0) ? 1 : -1;
-        }
-        
-        remaining_delta_y -= quantized_step;
-        step_y = quantized_step * MOUSE_SENSITIVITY_MULTIPLIER;
-    }
-
-    // 发送鼠标报告
-    if ((step_x != 0 || step_y != 0) && tud_hid_ready()) {
-        tud_hid_mouse_report(REPORT_ID_MOUSE, 0, step_x, step_y, 0, 0);
-    }
+// Invoked when device is unmounted
+void tud_umount_cb(void)
+{
+  blink_interval_ms = BLINK_NOT_MOUNTED;
 }
 
-static void handle_gamepad_mode(uint32_t btn_state) {
-    // 映射按钮到游戏手柄
-    uint32_t gamepad_buttons = 0;
-    for (int i = 0; i < BUTTON_COUNT; i++) {
-        if (btn_state & (1 << i)) {
-            gamepad_buttons |= (1 << KEYMAP_GAMEPAD_MODE[i]);
-        }
-    }
-
-    // 处理编码器移动（循环绕转）
-    int16_t mapped_x = (int16_t)gamepad_x * 255 / 256 - 255;
-    int16_t mapped_y = (int16_t)gamepad_y * 255 / 256 - 255;
-
-    // 转换为8位值（自动溢出实现循环）
-    int8_t axis_x = (int8_t)(mapped_x);
-    int8_t axis_y = (int8_t)(mapped_y);
-
-
-    // 根据TinyUSB的API调整参数顺序
-    if (tud_hid_ready()) {
-        tud_hid_gamepad_report(REPORT_ID_GAMEPAD, 
-                             axis_x,        // X
-                             axis_y,        // Y
-                             0,             // Z
-                             0,             // Rz
-                             0,             // Rx
-                             0,             // Ry
-                             0,             // Hat
-                             gamepad_buttons);
-    }
+// Invoked when usb bus is suspended
+// remote_wakeup_en : if host allow us  to perform remote wakeup
+// Within 7ms, device must draw an average of current less than 2.5 mA from bus
+void tud_suspend_cb(bool remote_wakeup_en)
+{
+  (void)remote_wakeup_en;
+  blink_interval_ms = BLINK_SUSPENDED;
 }
+
+// Invoked when usb bus is resumed
+void tud_resume_cb(void)
+{
+  blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
+}
+
+//--------------------------------------------------------------------+
+// USB HID
+//--------------------------------------------------------------------+
 
 void hid_task(void)
 {
-    static uint32_t start_ms = 0;
-    const uint32_t current_time = board_millis();
+  // Poll every 10ms
+  const uint32_t interval_ms = 10;
+  static uint32_t start_ms = 0;
 
-    if (current_time - start_ms < MAIN_LOOP_INTERVAL_MS) return;
-    start_ms = current_time;
+  if (board_millis() - start_ms < interval_ms)
+    return; // not enough time
+  start_ms += interval_ms;
 
-    const uint32_t btn_state = read_buttons();
+  uint32_t const btn = board_button_read();
 
-    if (tud_suspended()) {
-        if (btn_state) tud_remote_wakeup();
-        return;
-    }
+  // Remote wakeup
+  if (tud_suspended() && btn)
+  {
+    // Wake up host if we are in suspend mode
+    // and REMOTE_WAKEUP feature is enabled by host
+    tud_remote_wakeup();
+  }
 
-    switch (current_mode) {
-        case MODE_KEYBOARD_MOUSE:
-            handle_keyboard_mouse_mode(btn_state);
-            break;
-        case MODE_GAMEPAD:
-            handle_gamepad_mode(btn_state);
-            break;
-        default: break;
-    }
-} 
+  /*------------- Keyboard -------------*/
+  if (tud_hid_n_ready(ITF_KEYBOARD))
+  {
+    // use to avoid send multiple consecutive zero report for keyboard
+    static bool has_key = false;
 
-//--------------------------------------------------------------------+
-// Flash存储操作
-//---------------------------------------------------------------------
-SystemMode load_system_mode(void) {
-    const SystemConfig *config = (const SystemConfig *)(XIP_BASE + FLASH_TARGET_OFFSET);
-    if (config->magic == FLASH_CONFIG_MAGIC) {
-        return config->mode;
-    }
-    return MODE_KEYBOARD_MOUSE; // 默认模式
-}
-
-void save_system_mode(SystemMode mode) {
-    SystemConfig config = {
-        .magic = FLASH_CONFIG_MAGIC,
-        .mode = mode,
-    };
-
-    uint8_t sector[FLASH_SECTOR_SIZE] = {0};
-    memcpy(sector, &config, sizeof(config));
-
-    // 安全执行Flash操作
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE);
-    flash_range_program(FLASH_TARGET_OFFSET, sector, FLASH_SECTOR_SIZE);
-    restore_interrupts(ints);
-}
-
-//--------------------------------------------------------------------+
-// USB HID回调函数
-//---------------------------------------------------------------------
-void tud_mount_cb(void) {
-     blink_interval_ms = BLINK_MOUNTED;
-}
-void tud_umount_cb(void) {}
-void tud_suspend_cb(bool remote_wakeup_en) { (void)remote_wakeup_en; }
-void tud_resume_cb(void) {}
-
-void tud_hid_set_report_cb(
-    uint8_t instance,
-    uint8_t report_id,
-    hid_report_type_t report_type,
-    uint8_t const *buffer,
-    uint16_t bufsize)
-{
-    (void)instance;
-    (void)report_id;
-    (void)report_type;
-
-    // 打印接收到的数据
-    printf("Received %d bytes:\n", bufsize);
-    for (int i = 0; i < bufsize; i++)
+    if (btn)
     {
-        printf("%02X ", buffer[i]);
-        if ((i + 1) % 16 == 0)
-            printf("\n"); // 每16字节换行
+      uint8_t keycode[6] = {0};
+      keycode[0] = HID_KEY_A;
+
+      tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, keycode);
+
+      has_key = true;
     }
-    printf("\n\n");
+    else
+    {
+      // send empty key report if previously has key pressed
+      if (has_key)
+        tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, NULL);
+      has_key = false;
+    }
+  }
+
+  /*------------- Mouse -------------*/
+  if (tud_hid_n_ready(ITF_MOUSE))
+  {
+    if (btn)
+    {
+      int8_t const delta = 5;
+
+      // no button, right + down, no scroll pan
+      tud_hid_n_mouse_report(ITF_MOUSE, 0, 0x00, delta, delta, 0, 0);
+    }
+  }
 }
 
-uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
-                              hid_report_type_t report_type, uint8_t* buffer,
-                              uint16_t reqlen)
+// Invoked when received GET_REPORT control request
+// Application must fill buffer report's content and return its length.
+// Return zero will cause the stack to STALL request
+uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen)
 {
-    (void)instance;
-    (void)report_id;
-    (void)report_type;
-    (void)buffer;
-    (void)reqlen;
-    blink_interval_ms = 70;
-    return 0;
+  // TODO not Implemented
+  (void)itf;
+  (void)report_id;
+  (void)report_type;
+  (void)buffer;
+  (void)reqlen;
+
+  return 0;
 }
 
-void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len)
+// Invoked when received SET_REPORT control request or
+// received data on OUT endpoint ( Report ID = 0, Type = 0 )
+void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize)
 {
-    (void)instance;
-    (void)report;
-    (void)len;
+  // TODO set LED based on CAPLOCK, NUMLOCK etc...
+  (void)itf;
+  (void)report_id;
+  (void)report_type;
+  (void)buffer;
+  (void)bufsize;
 }
 
- void led_blinking_task(void)
- {
-   static uint32_t start_ms = 0;
-   static bool led_state = false;
- 
-   // Blink every interval ms
-   if ( board_millis() - start_ms < blink_interval_ms) return; // not enough time
-   start_ms += blink_interval_ms;
- 
-   board_led_write(led_state);
-   led_state = 1 - led_state; // toggle
- }
+//--------------------------------------------------------------------+
+// BLINKING TASK
+//--------------------------------------------------------------------+
+void led_blinking_task(void)
+{
+  static uint32_t start_ms = 0;
+  static bool led_state = false;
+
+  // Blink every interval ms
+  if (board_millis() - start_ms < blink_interval_ms)
+    return; // not enough time
+  start_ms += blink_interval_ms;
+
+  board_led_write(led_state);
+  led_state = 1 - led_state; // toggle
+}
