@@ -78,6 +78,10 @@ uint8_t const desc_hid_report2[] =
     {
         TUD_HID_REPORT_DESC_MOUSE()};
 
+uint8_t const desc_hid_report3[] =
+    {
+        TUD_HID_REPORT_DESC_GENERIC_INOUT(CFG_TUD_HID_EP_BUFSIZE)};
+
 // Invoked when received GET HID REPORT DESCRIPTOR
 // Application return pointer to descriptor
 // Descriptor contents must exist long enough for transfer to complete
@@ -91,6 +95,10 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t itf)
   {
     return desc_hid_report2;
   }
+  else if (itf == 2)
+  {
+    return desc_hid_report3;
+  }
 
   return NULL;
 }
@@ -103,13 +111,15 @@ enum
 {
   ITF_NUM_HID1,
   ITF_NUM_HID2,
+  ITF_NUM_HID3,
   ITF_NUM_TOTAL
 };
 
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_HID_DESC_LEN)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_HID_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
 
 #define EPNUM_HID1 0x81
 #define EPNUM_HID2 0x82
+#define EPNUM_HID3 0x03
 
 uint8_t const desc_configuration[] =
     {
@@ -118,7 +128,8 @@ uint8_t const desc_configuration[] =
 
         // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
         TUD_HID_DESCRIPTOR(ITF_NUM_HID1, 4, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report1), EPNUM_HID1, CFG_TUD_HID_EP_BUFSIZE, 10),
-        TUD_HID_DESCRIPTOR(ITF_NUM_HID2, 5, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report2), EPNUM_HID2, CFG_TUD_HID_EP_BUFSIZE, 10)};
+        TUD_HID_DESCRIPTOR(ITF_NUM_HID2, 5, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report2), EPNUM_HID2, CFG_TUD_HID_EP_BUFSIZE, 10),
+        TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID3, 6, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report3), EPNUM_HID3, 0x80 | EPNUM_HID3, CFG_TUD_HID_EP_BUFSIZE, 10)};
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR
 // Application return pointer to descriptor
@@ -151,6 +162,7 @@ char const *string_desc_arr[] =
         NULL,                       // 3: Serials will use unique ID if possible
         "Keyboard Interface",       // 4: Interface 1 String
         "Mouse Interface",          // 5: Interface 2 String
+        "Generic HID Interface",    // 6: Interface 3 String
 };
 
 static uint16_t _desc_str[32 + 1];

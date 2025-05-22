@@ -38,7 +38,8 @@
 enum
 {
   ITF_KEYBOARD = 0,
-  ITF_MOUSE = 1
+  ITF_MOUSE = 1,
+  ITF_GENERIC = 2,
 };
 
 /* Blink pattern
@@ -54,6 +55,7 @@ enum
 };
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
+static bool led_state = false;
 
 void led_blinking_task(void);
 void hid_task(void);
@@ -194,12 +196,40 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
 // received data on OUT endpoint ( Report ID = 0, Type = 0 )
 void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize)
 {
-  // TODO set LED based on CAPLOCK, NUMLOCK etc...
-  (void)itf;
-  (void)report_id;
-  (void)report_type;
-  (void)buffer;
-  (void)bufsize;
+  if (itf == ITF_GENERIC)
+  {
+    char cmd[65] = {0};
+    memcpy(cmd, buffer, bufsize > 64 ? 64 : bufsize);
+
+    // 解析频率指令
+    if (strncmp(cmd, "freq:", 5) == 0)
+    {
+      int freq = atoi(cmd + 5);
+      if (freq >= 100 && freq <= 5000)
+      {
+        blink_interval_ms = freq;
+
+        // 准备响应数据
+        char response[65] = {0x01};
+        memcpy(response + 1, "data", 5);
+        tud_hid_report(ITF_GENERIC, response, 65);
+        int len = snprintf(response, sizeof(response), "%d:set ok", blink_interval_ms);
+
+        // 发送输入报告
+        tud_hid_report(ITF_GENERIC, response, len + 1);
+      }
+      else
+      {
+        const char *err = "Invalid range (100-5000)";
+        tud_hid_report(ITF_GENERIC, err, strlen(err) + 1);
+      }
+    }
+    else
+    {
+      const char *err = "Unknown command";
+      tud_hid_report(ITF_GENERIC, err, strlen(err) + 1);
+    }
+  }
 }
 
 //--------------------------------------------------------------------+
@@ -208,13 +238,11 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
 void led_blinking_task(void)
 {
   static uint32_t start_ms = 0;
-  static bool led_state = false;
 
-  // Blink every interval ms
   if (board_millis() - start_ms < blink_interval_ms)
-    return; // not enough time
-  start_ms += blink_interval_ms;
+    return;
+  start_ms = board_millis();
 
   board_led_write(led_state);
-  led_state = 1 - led_state; // toggle
+  led_state = !led_state;
 }
