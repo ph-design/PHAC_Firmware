@@ -56,6 +56,14 @@ enum
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 static bool led_state = false;
+static char response_buf[64];
+
+// HID Report Echo variables
+static uint8_t received_data[64];
+static uint8_t received_report_id = 0;
+static uint8_t received_itf = 0;
+static uint16_t received_size = 0;
+static bool send_response = false;
 
 void led_blinking_task(void);
 void hid_task(void);
@@ -175,6 +183,16 @@ void hid_task(void)
       tud_hid_n_mouse_report(ITF_MOUSE, 0, 0x00, delta, delta, 0, 0);
     }
   }
+  /*------------- Generic HID -------------*/
+  /*------------- Echo Generic HID Report -------------*/
+  if (send_response)
+  {
+    if (tud_hid_n_ready(received_itf))
+    {
+      tud_hid_n_report(received_itf, received_report_id, received_data, received_size);
+      send_response = false;
+    }
+  }
 }
 
 // Invoked when received GET_REPORT control request
@@ -196,41 +214,43 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
 // received data on OUT endpoint ( Report ID = 0, Type = 0 )
 void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize)
 {
+  (void)report_type;
+
   if (itf == ITF_GENERIC)
   {
-    char cmd[65] = {0};
-    memcpy(cmd, buffer, bufsize > 64 ? 64 : bufsize);
+    // Store received data to echo back
+    received_report_id = report_id;
+    received_itf = itf;
+    received_size = bufsize > sizeof(received_data) ? sizeof(received_data) : bufsize;
+    memcpy(received_data, buffer, received_size);
+    send_response = true;
+    
+  }
+}
 
-    // 解析频率指令
-    if (strncmp(cmd, "freq:", 5) == 0)
+/*if (itf == ITF_GENERIC)
+{
+  char cmd[65] = {0};
+  memcpy(cmd, buffer, bufsize > 64 ? 64 : bufsize);
+
+   解析频率指令
+  if (strncmp(cmd, "freq:", 5) == 0)
+  {
+    int freq = atoi(cmd + 5);
+    if (freq >= 100 && freq <= 5000)
     {
-      int freq = atoi(cmd + 5);
-      if (freq >= 100 && freq <= 5000)
-      {
-        blink_interval_ms = freq;
+      blink_interval_ms = freq;
+      // 构造响应，格式：原命令 + "received"
+      uint8_t response_data[64];
+      response_data[0] = 2; // Report ID = 1
+      int data_len = snprintf((char *)response_data + 1, sizeof(response_data) - 1, "%s received", cmd);
 
-        // 准备响应数据
-        char response[65] = {0x01};
-        memcpy(response + 1, "data", 5);
-        tud_hid_report(ITF_GENERIC, response, 65);
-        int len = snprintf(response, sizeof(response), "%d:set ok", blink_interval_ms);
-
-        // 发送输入报告
-        tud_hid_report(ITF_GENERIC, response, len + 1);
-      }
-      else
-      {
-        const char *err = "Invalid range (100-5000)";
-        tud_hid_report(ITF_GENERIC, err, strlen(err) + 1);
-      }
-    }
-    else
-    {
-      const char *err = "Unknown command";
-      tud_hid_report(ITF_GENERIC, err, strlen(err) + 1);
+      // 发送数据
+      tud_hid_n_report(ITF_GENERIC, 1, response_data, data_len + 1);
     }
   }
 }
+}*/
 
 //--------------------------------------------------------------------+
 // BLINKING TASK
