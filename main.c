@@ -9,7 +9,9 @@
 #include "hardware/flash.h"
 #include "modules/encoder/ec11.h"
 #include "modules/debounce/debounce.h"
+#include "modules/rgb/ws2812.h"
 #include "math.h"
+#include "ws2812.pio.h"
 
 //--------------------------------------------------------------------+
 // Hardware Configuration
@@ -34,6 +36,10 @@
 #define ENCODER_X_PIN_B 9
 #define ENCODER_Y_PIN_A 7
 #define ENCODER_Y_PIN_B 8
+
+// WS2812 LED configurations
+#define WS2812_PIN 11
+#define DEFAULT_BRIGHTNESS 0.4 // 10% brightness
 
 // Flash storage configuration
 #define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
@@ -230,6 +236,17 @@ int main(void)
 	ec11_init(&encoder_x, ENCODER_X_PIN_A, ENCODER_X_PIN_B, encoder_x_callback, NULL);
 	ec11_init(&encoder_y, ENCODER_Y_PIN_A, ENCODER_Y_PIN_B, encoder_y_callback, NULL);
 
+	// Initialize ws2812
+	PIO pio;
+    uint sm;
+    uint offset;
+    bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
+    hard_assert(success);
+
+    ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
+
+    int t = 0;
+
 	while (1)
 	{
 		tud_task(); // Handle USB events
@@ -239,6 +256,8 @@ int main(void)
 		ec11_update(&encoder_y);
 		debounce_update(debounce_buttons, BUTTON_COUNT);
 		hid_task(); // Process HID reports
+		pattern_random(pio, sm, NUM_PIXELS, t, DEFAULT_BRIGHTNESS);
+        t++;
 	}
 }
 
