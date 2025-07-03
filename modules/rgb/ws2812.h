@@ -1,21 +1,32 @@
-#ifndef WS2812_H
-#define WS2812_H
+#pragma once
 
+#include "pico/stdlib.h"
 #include "hardware/pio.h"
+#include "ws2812.pio.h"
 
-#define IS_RGBW false
-#define NUM_PIXELS 150
+typedef struct
+{
+    PIO pio;
+    uint sm;
+    uint offset;
+    uint pin;
+    uint num_pixels;
+} ws2812_t;
 
-void pattern_random(PIO pio, uint sm, uint len, uint t, float brightness);
+// 初始化WS2812灯带
+bool ws2812_init(ws2812_t *strip, PIO pio, uint sm, uint pin, uint num_pixels, float freq);
 
-typedef void (*pattern)(PIO pio, uint sm, uint len, uint t);
+// 设置单个像素颜色 (RGB)
+void ws2812_set_pixel(ws2812_t *strip, uint32_t pixel_idx, uint8_t r, uint8_t g, uint8_t b);
 
-extern const struct {
-    pattern pat;
-    const char *name;
-} pattern_table[];
+// 更新所有像素到灯带
+void ws2812_show(ws2812_t *strip);
 
-uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b);
-void put_pixel(PIO pio, uint sm, uint32_t pixel_grb);
+// 清理资源
+void ws2812_release(ws2812_t *strip);
 
-#endif // WS2812_H
+// 预定义动画模式
+void ws2812_pattern_snakes(ws2812_t *strip, uint t);
+void ws2812_pattern_random(ws2812_t *strip);
+void ws2812_pattern_sparkle(ws2812_t *strip);
+void ws2812_pattern_greys(ws2812_t *strip, uint t);

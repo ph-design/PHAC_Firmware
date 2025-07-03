@@ -40,6 +40,8 @@
 // WS2812 LED configurations
 #define WS2812_PIN 11
 #define DEFAULT_BRIGHTNESS 0.4 // 10% brightness
+#define RGB_COUNT 7
+#define IS_RGBW false // RGB mode, not RGBW
 
 // Flash storage configuration
 #define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
@@ -237,15 +239,20 @@ int main(void)
 	ec11_init(&encoder_y, ENCODER_Y_PIN_A, ENCODER_Y_PIN_B, encoder_y_callback, NULL);
 
 	// Initialize ws2812
-	PIO pio;
-    uint sm;
-    uint offset;
-    bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
-    hard_assert(success);
+	ws2812_t strip;
 
-    ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
+	// 自动分配PIO资源
+	PIO pio = pio0;
+	uint sm = pio_claim_unused_sm(pio, true);
 
-    int t = 0;
+	// 初始化灯带 (800kHz频率)
+	if (!ws2812_init(&strip, pio, sm, WS2812_PIN, RGB_COUNT, 800000))
+	{
+		printf("Failed to initialize WS2812!\n");
+		return 1;
+	}
+
+	int t = 0;
 
 	while (1)
 	{
@@ -256,8 +263,9 @@ int main(void)
 		ec11_update(&encoder_y);
 		debounce_update(debounce_buttons, BUTTON_COUNT);
 		hid_task(); // Process HID reports
-		pattern_random(pio, sm, NUM_PIXELS, t, DEFAULT_BRIGHTNESS);
-        t++;
+		ws2812_set_pixel(&strip, 0, 10, 0, 50);
+		ws2812_show(&strip);
+		
 	}
 }
 
