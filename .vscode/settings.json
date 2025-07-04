@@ -42,6 +42,11 @@
         "tusb.h": "c",
         "board_api.h": "c",
         "stdlib.h": "c",
-        "usb_descriptors.h": "c"
+        "usb_descriptors.h": "c",
+        "ws2812.h": "c",
+        "ws2812.pio.h": "c",
+        "time.h": "c",
+        "pio.h": "c",
+        "debounce.h": "c"
     }
 }

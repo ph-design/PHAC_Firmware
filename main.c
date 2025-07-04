@@ -10,6 +10,7 @@
 #include "modules/encoder/ec11.h"
 #include "modules/debounce/debounce.h"
 #include "modules/rgb/ws2812.h"
+#include "modules/rgb/pattern.h"
 #include "math.h"
 #include "ws2812.pio.h"
 
@@ -40,7 +41,7 @@
 // WS2812 LED configurations
 #define WS2812_PIN 11
 #define DEFAULT_BRIGHTNESS 0.4 // 10% brightness
-#define RGB_COUNT 7
+#define RGB_COUNT 5
 #define IS_RGBW false // RGB mode, not RGBW
 
 // Flash storage configuration
@@ -263,9 +264,7 @@ int main(void)
 		ec11_update(&encoder_y);
 		debounce_update(debounce_buttons, BUTTON_COUNT);
 		hid_task(); // Process HID reports
-		ws2812_set_pixel(&strip, 0, 10, 0, 50);
-		ws2812_show(&strip);
-		
+		ws2812_pattern_random(&strip);
 	}
 }
 
