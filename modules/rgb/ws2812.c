@@ -1,51 +1,97 @@
+// ws2812.c
 #include "ws2812.h"
-#include "hardware/pio.h"
-#include "ws2812.pio.h"
+#include <stdlib.h>
 
-// 颜色格式转换函数
-static inline uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b)
+// 静态全局状态
+static PIO pio;
+static uint sm;
+static uint offset;
+
+// 预定义模式表
+const Pattern pattern_table[] = {
+    {pattern_snakes, "Snakes!"},
+    {pattern_random, "Random data"},
+    {pattern_sparkle, "Sparkles"},
+    {pattern_greys, "Greys"},
+};
+const uint pattern_count = sizeof(pattern_table) / sizeof(pattern_table[0]);
+
+// 初始化WS2812
+void ws2812_init()
+{
+// 验证引脚兼容性
+#if WS2812_PIN >= NUM_BANK0_GPIOS
+#error WS2812_PIN >= 32 not supported
+#endif
+
+    // 分配PIO资源
+    bool success = pio_claim_free_sm_and_add_program_for_gpio_range(
+        &ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
+    hard_assert(success);
+
+    // 初始化PIO程序（800kHz，RGB模式）
+    ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, false);
+}
+
+// 清理资源
+void ws2812_cleanup()
+{
+    pio_remove_program_and_unclaim_sm(&ws2812_program, pio, sm, offset);
+}
+
+// 写入单个像素
+void put_pixel(uint32_t pixel_grb)
+{
+    pio_sm_put_blocking(pio, sm, pixel_grb << 8u);
+}
+
+// RGB转32位颜色值
+uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b)
 {
     return ((uint32_t)(r) << 8) | ((uint32_t)(g) << 16) | (uint32_t)(b);
 }
 
-// 初始化函数
-bool ws2812_init(ws2812_t *strip, PIO pio, uint sm, uint pin, uint num_pixels, float freq)
+// === 预定义模式函数 ===
+void pattern_snakes(uint len, uint t)
 {
-    // 参数检查
-    if (pin >= NUM_BANK0_GPIOS)
-        return false;
-
-    // 设置灯带参数
-    strip->pio = pio;
-    strip->sm = sm;
-    strip->pin = pin;
-    strip->num_pixels = num_pixels;
-
-    // 加载PIO程序并初始化
-    strip->offset = pio_add_program(pio, &ws2812_program);
-    ws2812_program_init(pio, sm, strip->offset, pin, freq, false);
-
-    return true;
+    for (uint i = 0; i < len; ++i)
+    {
+        uint x = (i + (t >> 1)) % 64;
+        if (x < 10)
+            put_pixel(urgb_u32(0xff, 0, 0));
+        else if (x >= 15 && x < 25)
+            put_pixel(urgb_u32(0, 0xff, 0));
+        else if (x >= 30 && x < 40)
+            put_pixel(urgb_u32(0, 0, 0xff));
+        else
+            put_pixel(0);
+    }
 }
 
-// 设置像素颜色
-void ws2812_set_pixel(ws2812_t *strip, uint32_t pixel_idx, uint8_t r, uint8_t g, uint8_t b)
+void pattern_random(uint len, uint t)
 {
-    if (pixel_idx >= strip->num_pixels)
+    if (t % 8)
         return;
-    uint32_t color = urgb_u32(r, g, b);
-    pio_sm_put_blocking(strip->pio, strip->sm, color << 8u);
+    for (uint i = 0; i < len; ++i)
+        put_pixel(rand());
 }
 
-// 刷新显示
-void ws2812_show(ws2812_t *strip)
+void pattern_sparkle(uint len, uint t)
 {
-    sleep_us(50); // 发送复位信号
+    if (t % 8)
+        return;
+    for (uint i = 0; i < len; ++i)
+        put_pixel(rand() % 16 ? 0 : 0xffffff);
 }
 
-// 资源释放
-void ws2812_release(ws2812_t *strip)
+void pattern_greys(uint len, uint t)
 {
-    pio_sm_set_enabled(strip->pio, strip->sm, false);
-    pio_remove_program(strip->pio, &ws2812_program, strip->offset);
+    uint max = 100; // 亮度限制
+    t %= max;
+    for (uint i = 0; i < len; ++i)
+    {
+        put_pixel(t * 0x10101);
+        if (++t >= max)
+            t = 0;
+    }
 }

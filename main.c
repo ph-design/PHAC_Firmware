@@ -10,7 +10,6 @@
 #include "modules/encoder/ec11.h"
 #include "modules/debounce/debounce.h"
 #include "modules/rgb/ws2812.h"
-#include "modules/rgb/pattern.h"
 #include "math.h"
 #include "ws2812.pio.h"
 
@@ -39,7 +38,7 @@
 #define ENCODER_Y_PIN_B 8
 
 // WS2812 LED configurations
-#define WS2812_PIN 11
+#define WS2812_PIN 22
 #define DEFAULT_BRIGHTNESS 0.4 // 10% brightness
 #define RGB_COUNT 5
 #define IS_RGBW false // RGB mode, not RGBW
@@ -240,20 +239,9 @@ int main(void)
 	ec11_init(&encoder_y, ENCODER_Y_PIN_A, ENCODER_Y_PIN_B, encoder_y_callback, NULL);
 
 	// Initialize ws2812
-	ws2812_t strip;
+	ws2812_init();
 
-	// 自动分配PIO资源
-	PIO pio = pio0;
-	uint sm = pio_claim_unused_sm(pio, true);
-
-	// 初始化灯带 (800kHz频率)
-	if (!ws2812_init(&strip, pio, sm, WS2812_PIN, RGB_COUNT, 800000))
-	{
-		printf("Failed to initialize WS2812!\n");
-		return 1;
-	}
-
-	int t = 0;
+	uint t = 0;
 
 	while (1)
 	{
@@ -264,7 +252,20 @@ int main(void)
 		ec11_update(&encoder_y);
 		debounce_update(debounce_buttons, BUTTON_COUNT);
 		hid_task(); // Process HID reports
-		ws2812_pattern_random(&strip);
+		uint pat = rand() % pattern_count;
+		int dir = (rand() >> 30) & 1 ? 1 : -1;
+
+		printf("%s %s\n",
+			   pattern_table[pat].name,
+			   dir == 1 ? "(forward)" : "(backward)");
+
+		// 执行模式动画
+		for (int i = 0; i < 1000; ++i)
+		{
+			pattern_table[pat].pat(NUM_PIXELS, t);
+			sleep_ms(UPDATE_INTERVAL_MS); // 帧率控制
+			t += dir;
+		}
 	}
 }
 

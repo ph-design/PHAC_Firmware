@@ -47,7 +47,6 @@ target_sources(PHAC-Firmware PUBLIC
         modules/encoder/ec11.c
         modules/debounce/debounce.c
         modules/rgb/ws2812.c
-        modules/rgb/pattern.c
         )
 
 # Make sure TinyUSB can find tusb_config.h
