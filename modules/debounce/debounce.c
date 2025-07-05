@@ -1,43 +1,102 @@
 #include "debounce.h"
-#include "bsp/board_api.h"
 
-void debounce_init(DebounceButton* buttons, const uint8_t* pins, uint8_t count) {
-    for (uint8_t i = 0; i < count; i++) {
-        buttons[i].pin = pins[i];
-        buttons[i].stable_state = gpio_get(pins[i]);
-        buttons[i].last_state = buttons[i].stable_state;
-        buttons[i].last_time = board_millis();
-        
+#ifndef DEBOUNCE_TIME_US
+#define DEBOUNCE_TIME_US 5000
+#endif
+
+static void debounce_none(DebounceState *state)
+{
+    for (int i = 0; i < BUTTON_COUNT; i++)
+    {
+        bool gpio_state = !gpio_get(state->pins[i]);
+        state->states[i].pressed = gpio_state;
+    }
+}
+
+static void asym_eager_defer_pk(DebounceState *state)
+{
+    for (int i = 0; i < BUTTON_COUNT; i++)
+    {
+        bool gpio_state = !gpio_get(state->pins[i]);
+
+        KeyState *key = &state->states[i];
+        uint64_t now = time_us_64();
+
+        if (gpio_state != key->pressed)
+        {
+            if (!key->active)
+            {
+                key->active = true;
+                key->timestamp = now;
+
+                if (gpio_state)
+                {
+                    key->pressed = true;
+                }
+            }
+            else if ((now - key->timestamp) >= DEBOUNCE_TIME_US)
+            {
+                key->active = false;
+
+                if (!gpio_state)
+                {
+                    key->pressed = false;
+                }
+            }
+        }
+        else
+        {
+            key->active = false;
+        }
+    }
+}
+
+void debounce_init(DebounceState *state, const uint8_t *pins)
+{
+    state->pins = pins;
+    state->mode = ASYM_EAGER_DEFER_PK;
+
+    for (int i = 0; i < BUTTON_COUNT; i++)
+    {
+        state->states[i] = (KeyState){
+            .pressed = false,
+            .active = false,
+            .timestamp = 0};
+
         gpio_init(pins[i]);
         gpio_set_dir(pins[i], GPIO_IN);
         gpio_pull_up(pins[i]);
     }
 }
 
-void debounce_update(DebounceButton* buttons, uint8_t count) {
-    const uint32_t now = board_millis();
-    
-    for (uint8_t i = 0; i < count; i++) {
-        DebounceButton* btn = &buttons[i];
-        const uint8_t current_state = gpio_get(btn->pin);
-        
-        if (current_state != btn->last_state) {
-            btn->last_state = current_state;
-            btn->last_time = now;
-        }
-        
-        if ((now - btn->last_time) > DEBOUNCE_TIME_MS) {
-            btn->stable_state = current_state;
-        }
+void debounce_update(DebounceState *state)
+{
+    switch (state->mode)
+    {
+    case DEBOUNCE_NONE:
+        debounce_none(state);
+        break;
+
+    case ASYM_EAGER_DEFER_PK:
+        asym_eager_defer_pk(state);
+        break;
     }
 }
 
-uint32_t debounce_get_states(DebounceButton* buttons, uint8_t count) {
+uint32_t debounce_get_states(DebounceState *state)
+{
     uint32_t states = 0;
-    for (uint8_t i = 0; i < count; i++) {
-        if (!buttons[i].stable_state) {  // 低电平有效
+    for (int i = 0; i < BUTTON_COUNT; i++)
+    {
+        if (state->states[i].pressed)
+        {
             states |= (1 << i);
         }
     }
     return states;
+}
+
+void debounce_set_mode(DebounceState *state, DebounceMode mode)
+{
+    state->mode = mode;
 }

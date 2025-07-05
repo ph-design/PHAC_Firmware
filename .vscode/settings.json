@@ -47,6 +47,7 @@
         "ws2812.pio.h": "c",
         "time.h": "c",
         "pio.h": "c",
-        "debounce.h": "c"
+        "debounce.h": "c",
+        "gpio.h": "c"
     }
 }

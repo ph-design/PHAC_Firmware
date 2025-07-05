@@ -18,8 +18,7 @@
 //--------------------------------------------------------------------+
 
 // Debounce default 5ms
-#undef DEBOUNCE_TIME_MS
-#define DEBOUNCE_TIME_MS 5
+#define DEBOUNCE_TIME_US 5000
 
 // Button configurations
 #define BUTTON_COUNT 7
@@ -64,6 +63,17 @@ typedef struct
 
 typedef struct
 {
+	DebounceState debounce;
+	EC11_Encoder encoder_x;
+	EC11_Encoder encoder_y;
+	uint8_t button_pins[BUTTON_COUNT];
+	uint8_t keymap_keyboard_mode[BUTTON_COUNT];
+	uint8_t keymap_gamepad_mode[BUTTON_COUNT];
+	SystemMode current_mode;
+} AppState;
+
+typedef struct
+{
 	uint t;
 	int dir;
 	uint pattern_index;
@@ -96,41 +106,11 @@ static char response_buf[64];
 void led_blinking_task(void);
 
 // Mouse parameters
-#define ENCODER_BASE_SENSITIVITY 5		 // Base encoder sensitivity
+#define ENCODER_BASE_SENSITIVITY 5	   // Base encoder sensitivity
 #define MOUSE_SENSITIVITY_MULTIPLIER 2 // Mouse movement multiplier
-#define GAMEPAD_SENSITIVITY 10				 // Gamepad axis sensitivity
-#define SMOOTHING_FACTOR 5.0f					 // Smoothing factor for mouse movement
-#define MAIN_LOOP_INTERVAL_MS 0.1			 // HID report interval
-
-// Keycode mappings
-static const uint8_t button_pins[BUTTON_COUNT] = {
-		BTN_BTA,
-		BTN_BTB,
-		BTN_BTC,
-		BTN_BTD,
-		BTN_FXL,
-		BTN_START,
-		BTN_FXR};
-
-static const uint8_t KEYMAP_KEYBOARD_MODE[BUTTON_COUNT] = {
-		HID_KEY_D, // BTN_BTA
-		HID_KEY_F, // BTN_BTB
-		HID_KEY_J, // BTN_BTC
-		HID_KEY_K, // BTN_BTD
-		HID_KEY_N, // BTN_FXL
-		HID_KEY_Y, // BTN_START
-		HID_KEY_M	 // BTN_FXR
-};
-
-static const uint8_t KEYMAP_GAMEPAD_MODE[BUTTON_COUNT] = {
-		0, // BTN_BTA -> Button 1
-		1, // BTN_BTB -> Button 2
-		2, // BTN_BTC -> Button 3
-		3, // BTN_BTD -> Button 4
-		4, // BTN_FXL -> Button 5
-		5, // BTN_START -> Button 6
-		6	 // BTN_FXR -> Button 7
-};
+#define GAMEPAD_SENSITIVITY 10		   // Gamepad axis sensitivity
+#define SMOOTHING_FACTOR 5.0f		   // Smoothing factor for mouse movement
+#define MAIN_LOOP_INTERVAL_MS 0.1	   // HID report interval
 
 // HID Report Echo variables
 static uint8_t received_data[64];
@@ -143,7 +123,40 @@ static bool send_response = false;
 // Globals
 //--------------------------------------------------------------------+
 EC11_Encoder encoder_x, encoder_y;
-DebounceButton debounce_buttons[BUTTON_COUNT];
+
+// Application state and keymap
+static AppState app = {
+	.button_pins = {
+		BTN_BTA,
+		BTN_BTB,
+		BTN_BTC,
+		BTN_BTD,
+		BTN_FXL,
+		BTN_START,
+		BTN_FXR
+	},
+
+	.keymap_keyboard_mode = {
+		HID_KEY_D,
+		HID_KEY_F,
+		HID_KEY_J,
+		HID_KEY_K,
+		HID_KEY_N,
+		HID_KEY_Y,
+		HID_KEY_M
+	},
+
+	.keymap_gamepad_mode = {
+		0,
+		1,
+		2,
+		3,
+		4,
+		5,
+		6
+		},
+	// give default mode as keyboard
+	.current_mode = MODE_KEYBOARD};
 
 static int8_t mouse_x = 0;
 static int8_t mouse_y = 0;
@@ -158,7 +171,6 @@ static float remaining_delta_y = 0.0f;
 
 static SystemMode current_mode = MODE_KEYBOARD;
 
-
 static AnimationState anim_state = {
 	.t = 0,
 	.dir = 1,
@@ -172,9 +184,7 @@ const struct
 	pattern_func pat;
 	const char *name;
 } pattern_table[] = {
-	{pattern_snakes, "Snakes!"},
 	{pattern_random, "Random data"},
-	{pattern_sparkle, "Sparkles"},
 	{pattern_greys, "Greys"},
 };
 const uint pattern_count = sizeof(pattern_table) / sizeof(pattern_table[0]);
@@ -217,16 +227,16 @@ void init_animation(void);
 void update_animation(void);
 void ws2812_update_state(void);
 
-	//--------------------------------------------------------------------+
-	// Main application
-	//---------------------------------------------------------------------
-	int main(void)
+//--------------------------------------------------------------------+
+// Main application
+//---------------------------------------------------------------------
+int main(void)
 {
 	// Hardware initialization
 	board_init();
 	tusb_rhport_init_t dev_init = {
-			.role = TUSB_ROLE_DEVICE,
-			.speed = TUSB_SPEED_AUTO};
+		.role = TUSB_ROLE_DEVICE,
+		.speed = TUSB_SPEED_AUTO};
 	tusb_init(BOARD_TUD_RHPORT, &dev_init);
 	if (board_init_after_tusb)
 	{
@@ -235,7 +245,8 @@ void ws2812_update_state(void);
 	current_mode = load_system_mode();
 
 	// Initialize buttons with debouncing
-	debounce_init(debounce_buttons, button_pins, BUTTON_COUNT);
+	debounce_init(&app.debounce, app.button_pins);
+	debounce_set_mode(&app.debounce, ASYM_EAGER_DEFER_PK);
 
 	sleep_ms(10); // Initial debounce delay
 	bool mode_changed = false;
@@ -281,7 +292,7 @@ void ws2812_update_state(void);
 		led_blinking_task();
 		ec11_update(&encoder_x);
 		ec11_update(&encoder_y);
-		debounce_update(debounce_buttons, BUTTON_COUNT);
+		debounce_update(&app.debounce);
 		hid_task(); // Process HID reports
 		update_animation();
 
@@ -295,7 +306,7 @@ void ws2812_update_state(void);
 //---------------------------------------------------------------------
 static uint32_t read_buttons(void)
 {
-	return debounce_get_states(debounce_buttons, BUTTON_COUNT);
+	return debounce_get_states(&app.debounce);
 }
 
 static void send_keyboard_report(uint32_t btn)
@@ -315,7 +326,7 @@ static void send_keyboard_report(uint32_t btn)
 	{
 		if (btn & (1 << i))
 		{
-			keycode[key_cnt++] = KEYMAP_KEYBOARD_MODE[i];
+			keycode[key_cnt++] = app.keymap_keyboard_mode[i];
 		}
 	}
 	tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, key_cnt ? keycode : NULL);
@@ -371,11 +382,11 @@ static void handle_gamepad_mode(uint32_t btn_state)
 	{
 		if (btn_state & (1 << i))
 		{
-			gamepad_buttons |= (1 << KEYMAP_GAMEPAD_MODE[i]);
+			gamepad_buttons |= (1 << app.keymap_gamepad_mode[i]);
 		}
 	}
 
-	// Map encoder positions to gamepad axes
+	// Map encoder positions to gamepad axes  
 	int16_t mapped_x = (int16_t)gamepad_x * 255 / 256 - 255;
 	int16_t mapped_y = (int16_t)gamepad_y * 255 / 256 - 255;
 
@@ -385,14 +396,14 @@ static void handle_gamepad_mode(uint32_t btn_state)
 	if (tud_hid_n_ready(ITF_GAMEPAD))
 	{
 		tud_hid_n_gamepad_report(ITF_GAMEPAD, 0,
-														 axis_x, // X
-														 axis_y, // Y
-														 0,			 // Z
-														 0,			 // Rz
-														 0,			 // Rx
-														 0,			 // Ry
-														 0,			 // Hat
-														 gamepad_buttons);
+								 axis_x, // X
+								 axis_y, // Y
+								 0,		 // Z
+								 0,		 // Rz
+								 0,		 // Rx
+								 0,		 // Ry
+								 0,		 // Hat
+								 gamepad_buttons);
 	}
 }
 
@@ -452,8 +463,8 @@ SystemMode load_system_mode(void)
 void save_system_mode(SystemMode mode)
 {
 	SystemConfig config = {
-			.magic = FLASH_CONFIG_MAGIC,
-			.mode = mode,
+		.magic = FLASH_CONFIG_MAGIC,
+		.mode = mode,
 	};
 
 	uint8_t sector[FLASH_SECTOR_SIZE] = {0};
@@ -481,8 +492,8 @@ void tud_suspend_cb(bool remote_wakeup_en)
 void tud_resume_cb(void) {}
 
 uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id,
-															 hid_report_type_t report_type, uint8_t *buffer,
-															 uint16_t reqlen)
+							   hid_report_type_t report_type, uint8_t *buffer,
+							   uint16_t reqlen)
 {
 	(void)itf;
 	(void)report_id;
@@ -493,11 +504,11 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id,
 }
 
 void tud_hid_set_report_cb(
-		uint8_t itf,
-		uint8_t report_id,
-		hid_report_type_t report_type,
-		uint8_t const *buffer,
-		uint16_t bufsize)
+	uint8_t itf,
+	uint8_t report_id,
+	hid_report_type_t report_type,
+	uint8_t const *buffer,
+	uint16_t bufsize)
 {
 	(void)report_type;
 

@@ -2,19 +2,35 @@
 #define DEBOUNCE_H
 
 #include <stdint.h>
+#include <stdbool.h>
+#include "pico/time.h"
 #include "hardware/gpio.h"
 
-#define DEBOUNCE_TIME_MS 5  // 消抖时间5ms
+#define BUTTON_COUNT 7
 
-typedef struct {
-    uint8_t pin;            // GPIO引脚
-    uint8_t stable_state;   // 稳定状态
-    uint8_t last_state;     // 上次状态
-    uint32_t last_time;     // 上次变化时间
-} DebounceButton;
+typedef enum
+{
+    DEBOUNCE_NONE,
+    ASYM_EAGER_DEFER_PK
+} DebounceMode;
 
-void debounce_init(DebounceButton* buttons, const uint8_t* pins, uint8_t count);
-void debounce_update(DebounceButton* buttons, uint8_t count);
-uint32_t debounce_get_states(DebounceButton* buttons, uint8_t count);
+typedef struct
+{
+    bool pressed;
+    bool active;
+    uint64_t timestamp;
+} KeyState;
+
+typedef struct
+{
+    const uint8_t *pins;
+    KeyState states[BUTTON_COUNT];
+    DebounceMode mode;
+} DebounceState;
+
+void debounce_init(DebounceState *state, const uint8_t *pins);
+void debounce_update(DebounceState *state);
+uint32_t debounce_get_states(DebounceState *state);
+void debounce_set_mode(DebounceState *state, DebounceMode mode);
 
 #endif
