@@ -38,7 +38,6 @@
 #define ENCODER_Y_PIN_B 8
 
 // WS2812 LED configurations
-#define WS2812_PIN 22
 #define DEFAULT_BRIGHTNESS 0.4 // 10% brightness
 #define RGB_COUNT 5
 #define IS_RGBW false // RGB mode, not RGBW
@@ -62,6 +61,15 @@ typedef struct
 	uint32_t magic;
 	SystemMode mode;
 } SystemConfig;
+
+typedef struct
+{
+	uint t;
+	int dir;
+	uint pattern_index;
+	uint32_t last_update;
+	bool pattern_changed;
+} AnimationState;
 
 // USB interface IDs
 enum
@@ -150,6 +158,27 @@ static float remaining_delta_y = 0.0f;
 
 static SystemMode current_mode = MODE_KEYBOARD;
 
+
+static AnimationState anim_state = {
+	.t = 0,
+	.dir = 1,
+	.pattern_index = 0,
+	.last_update = 0,
+	.pattern_changed = true};
+
+typedef void (*pattern_func)(uint t);
+const struct
+{
+	pattern_func pat;
+	const char *name;
+} pattern_table[] = {
+	{pattern_snakes, "Snakes!"},
+	{pattern_random, "Random data"},
+	{pattern_sparkle, "Sparkles"},
+	{pattern_greys, "Greys"},
+};
+const uint pattern_count = sizeof(pattern_table) / sizeof(pattern_table[0]);
+
 //--------------------------------------------------------------------+
 // Encoder callbacks
 //---------------------------------------------------------------------
@@ -184,11 +213,14 @@ SystemMode load_system_mode(void);
 void save_system_mode(SystemMode mode);
 
 static void handle_rawhid_response(void);
+void init_animation(void);
+void update_animation(void);
+void ws2812_update_state(void);
 
-//--------------------------------------------------------------------+
-// Main application
-//---------------------------------------------------------------------
-int main(void)
+	//--------------------------------------------------------------------+
+	// Main application
+	//---------------------------------------------------------------------
+	int main(void)
 {
 	// Hardware initialization
 	board_init();
@@ -240,8 +272,7 @@ int main(void)
 
 	// Initialize ws2812
 	ws2812_init();
-
-	uint t = 0;
+	init_animation();
 
 	while (1)
 	{
@@ -252,20 +283,10 @@ int main(void)
 		ec11_update(&encoder_y);
 		debounce_update(debounce_buttons, BUTTON_COUNT);
 		hid_task(); // Process HID reports
-		uint pat = rand() % pattern_count;
-		int dir = (rand() >> 30) & 1 ? 1 : -1;
+		update_animation();
 
-		printf("%s %s\n",
-			   pattern_table[pat].name,
-			   dir == 1 ? "(forward)" : "(backward)");
-
-		// 执行模式动画
-		for (int i = 0; i < 1000; ++i)
-		{
-			pattern_table[pat].pat(NUM_PIXELS, t);
-			sleep_ms(UPDATE_INTERVAL_MS); // 帧率控制
-			t += dir;
-		}
+		// 更新DMA状态
+		ws2812_update_state();
 	}
 }
 
@@ -528,4 +549,58 @@ void led_blinking_task(void)
 
 	board_led_write(led_state);
 	led_state = !led_state;
+}
+
+void init_animation(void)
+{
+	anim_state.t = 0;
+	anim_state.dir = (rand() >> 30) & 1 ? 1 : -1;
+	anim_state.pattern_index = rand() % pattern_count;
+	anim_state.last_update = time_us_32();
+	anim_state.pattern_changed = true;
+}
+
+// 更新动画（非阻塞）
+void update_animation(void)
+{
+	uint32_t now = time_us_32();
+
+	// 检查是否需要更新动画帧
+	if ((now - anim_state.last_update) < (UPDATE_INTERVAL_MS * 1000))
+	{
+		return;
+	}
+
+	anim_state.last_update = now;
+
+	// 每1000帧切换模式
+	if (anim_state.t % 1000 == 0)
+	{
+		anim_state.pattern_index = (anim_state.pattern_index + 1) % pattern_count;
+		anim_state.dir = (rand() >> 30) & 1 ? 1 : -1;
+		anim_state.pattern_changed = true;
+	}
+
+	// 生成新帧
+	pattern_table[anim_state.pattern_index].pat(anim_state.t);
+
+	// 更新动画计数器
+	anim_state.t += anim_state.dir;
+
+	// 打印模式变化
+	if (anim_state.pattern_changed)
+	{
+		printf("%s %s\n", pattern_table[anim_state.pattern_index].name,
+			   anim_state.dir == 1 ? "(forward)" : "(backward)");
+		anim_state.pattern_changed = false;
+	}
+
+	// 更新DMA缓冲区
+	ws2812_update_buffer();
+
+	// 启动DMA传输（如果空闲）
+	if (!ws2812_is_busy())
+	{
+		ws2812_start_transfer();
+	}
 }
