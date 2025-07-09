@@ -6,9 +6,9 @@
 #include <stdlib.h>
 #include <math.h>
 
-// 平滑参数配置
-#define SMOOTHING_FACTOR 4  // 每个物理事件生成4个逻辑事件
-#define EVENT_INTERVAL_MS 2 // 事件分发间隔(毫秒)
+// 平滑参数配置6
+#define SMOOTHING_FACTOR 6  // 每个物理事件生成4个逻辑事件
+#define EVENT_INTERVAL_MS 1 // 事件分发间隔(毫秒)
 #define QUEUE_SIZE 32       // 事件队列大小
 #define MAX_ENCODERS 2      // 支持的最大编码器数量
 

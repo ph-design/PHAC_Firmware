@@ -49,6 +49,8 @@
         "pio.h": "c",
         "debounce.h": "c",
         "gpio.h": "c",
-        "cstdio": "c"
+        "cstdio": "c",
+        "random": "c",
+        "limits": "c"
     }
 }

@@ -38,7 +38,7 @@
 
 // WS2812 LED configurations
 #define DEFAULT_BRIGHTNESS 0.4 // 10% brightness
-#define RGB_COUNT 5
+#define RGB_COUNT 7
 #define IS_RGBW false // RGB mode, not RGBW
 
 // Flash storage configuration
@@ -67,6 +67,7 @@ typedef struct
 	EC11_Encoder encoder_x;
 	EC11_Encoder encoder_y;
 	uint8_t button_pins[BUTTON_COUNT];
+	uint32_t button_colors[BUTTON_COUNT];
 	uint8_t keymap_keyboard_mode[BUTTON_COUNT];
 	uint8_t keymap_gamepad_mode[BUTTON_COUNT];
 	SystemMode current_mode;
@@ -133,28 +134,21 @@ static AppState app = {
 		BTN_BTD,
 		BTN_FXL,
 		BTN_START,
-		BTN_FXR
-	},
+		BTN_FXR},
 
-	.keymap_keyboard_mode = {
-		HID_KEY_D,
-		HID_KEY_F,
-		HID_KEY_J,
-		HID_KEY_K,
-		HID_KEY_N,
-		HID_KEY_Y,
-		HID_KEY_M
-	},
+	.keymap_keyboard_mode = {HID_KEY_D, HID_KEY_F, HID_KEY_J, HID_KEY_K, HID_KEY_N, HID_KEY_Y, HID_KEY_M},
 
-	.keymap_gamepad_mode = {
-		0,
-		1,
-		2,
-		3,
-		4,
-		5,
-		6
-		},
+	.keymap_gamepad_mode = {0, 1, 2, 3, 4, 5, 6},
+
+	.button_colors = {
+		0x1AB090, // BTN_BTA: 淡蓝色 (A键)
+		0x1AB090, // BTN_BTB: 淡蓝色 (B键)
+		0x1AB090, // BTN_BTC: 淡蓝色 (C键)
+		0x1AB090, // BTN_BTD: 淡蓝色 (D键)
+		0xFA0718, // BTN_FXL: 橙红色 (左功能键)
+		0x08BF08, // BTN_START: 深蓝色 (START键)
+		0xFA0718  // BTN_FXR: 橙红色 (右功能键)
+	},
 	// give default mode as keyboard
 	.current_mode = MODE_KEYBOARD};
 
@@ -179,13 +173,23 @@ static AnimationState anim_state = {
 	.pattern_changed = true};
 
 typedef void (*pattern_func)(uint t);
+
+static const int button_led_map[BUTTON_COUNT] = {
+	1,  // A键 -> LED4
+	2,  // B键 -> LED3
+	3,  // C键 -> LED2
+	4,  // D键 -> LED1
+	6,  // 左功能键 -> LED5
+	0,  // START键 -> LED0
+	5   // 右功能键 -> LED6
+};
+
 const struct
 {
 	pattern_func pat;
 	const char *name;
 } pattern_table[] = {
-	{pattern_random, "Random data"},
-	{pattern_greys, "Greys"},
+	{pattern_black, "Black"},
 };
 const uint pattern_count = sizeof(pattern_table) / sizeof(pattern_table[0]);
 
@@ -206,6 +210,7 @@ void encoder_x_callback(EC11_Direction dir, void *user_data)
 
 void encoder_y_callback(EC11_Direction dir, void *user_data)
 {
+	dir = (EC11_Direction)(-dir); //Sry for the shit code, becuz i'm too lazy
 	if (current_mode == MODE_GAMEPAD)
 	{
 		gamepad_y = (gamepad_y + dir * GAMEPAD_SENSITIVITY) % 512;
@@ -223,9 +228,11 @@ SystemMode load_system_mode(void);
 void save_system_mode(SystemMode mode);
 
 static void handle_rawhid_response(void);
+static uint32_t read_buttons(void);
 void init_animation(void);
 void update_animation(void);
 void ws2812_update_state(void);
+void update_button_leds(uint32_t btn_state);
 
 //--------------------------------------------------------------------+
 // Main application
@@ -281,18 +288,38 @@ int main(void)
 	ec11_init(&encoder_x, ENCODER_X_PIN_A, ENCODER_X_PIN_B, encoder_x_callback, NULL);
 	ec11_init(&encoder_y, ENCODER_Y_PIN_A, ENCODER_Y_PIN_B, encoder_y_callback, NULL);
 
-
+	// Initialize ws2812
+	ws2812_init();
+	init_animation();
 
 	while (1)
 	{
-		tud_task(); // Handle USB events
+		tud_task();
 		handle_rawhid_response();
 		led_blinking_task();
 		ec11_update(&encoder_x);
 		ec11_update(&encoder_y);
 		debounce_update(&app.debounce);
-		hid_task(); // Process HID reports
+		hid_task();
 
+		// 更新动画（只修改像素缓冲区）
+		update_animation();
+
+		// 新增：读取按键状态并更新LED
+		uint32_t btn_state = read_buttons();
+		update_button_leds(btn_state);
+
+		// 统一更新DMA缓冲区
+		ws2812_update_buffer();
+
+		// 启动传输（如果DMA空闲）
+		if (!ws2812_is_busy())
+		{
+			ws2812_start_transfer();
+		}
+
+		// 更新DMA状态
+		ws2812_update_state();
 	}
 }
 
@@ -571,7 +598,6 @@ void update_animation(void)
 {
 	uint32_t now = time_us_32();
 
-	// 检查是否需要更新动画帧
 	if ((now - anim_state.last_update) < (UPDATE_INTERVAL_MS * 1000))
 	{
 		return;
@@ -579,7 +605,6 @@ void update_animation(void)
 
 	anim_state.last_update = now;
 
-	// 每1000帧切换模式
 	if (anim_state.t % 1000 == 0)
 	{
 		anim_state.pattern_index = (anim_state.pattern_index + 1) % pattern_count;
@@ -587,26 +612,33 @@ void update_animation(void)
 		anim_state.pattern_changed = true;
 	}
 
-	// 生成新帧
+	// 更新所有LED的像素缓冲区
 	pattern_table[anim_state.pattern_index].pat(anim_state.t);
-
-	// 更新动画计数器
 	anim_state.t += anim_state.dir;
 
-	// 打印模式变化
 	if (anim_state.pattern_changed)
 	{
 		printf("%s %s\n", pattern_table[anim_state.pattern_index].name,
 			   anim_state.dir == 1 ? "(forward)" : "(backward)");
 		anim_state.pattern_changed = false;
 	}
+}
 
-	// 更新DMA缓冲区
-	ws2812_update_buffer();
-
-	// 启动DMA传输（如果空闲）
-	if (!ws2812_is_busy())
+void update_button_leds(uint32_t btn_state)
+{
+	for (int i = 0; i < BUTTON_COUNT; i++)
 	{
-		ws2812_start_transfer();
+		int led_index = button_led_map[i];
+
+		if (btn_state & (1 << i))
+		{
+			// 按键按下 - 设置红色
+			put_pixel_at(led_index, app.button_colors[i]); // 红色
+		}
+		else
+		{
+			// 按键释放 - 恢复动画颜色
+			// 这里不需要设置0，动画函数会设置颜色
+		}
 	}
 }

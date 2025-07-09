@@ -50,9 +50,8 @@ bool ws2812_is_busy(void);
 dma_state_t ws2812_get_dma_state(void);
 
 // 预定义模式
-void pattern_snakes(uint t);
-void pattern_random(uint t);
-void pattern_sparkle(uint t);
-void pattern_greys(uint t);
+void pattern_rainbow(uint t);
+void pattern_black(uint t);
+
 
 #endif

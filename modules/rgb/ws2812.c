@@ -151,46 +151,34 @@ uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b)
 }
 
 // === 非阻塞式预定义模式函数 ===
-void pattern_snakes(uint t)
+
+void pattern_rainbow(uint t)
 {
+    // 彩虹跑马灯模式
     for (uint i = 0; i < NUM_PIXELS; ++i)
     {
-        uint x = (i + (t >> 1)) % 64;
-        if (x < 10)
-            put_pixel_at(i, urgb_u32(0xff, 0, 0));
-        else if (x >= 15 && x < 25)
-            put_pixel_at(i, urgb_u32(0, 0xff, 0));
-        else if (x >= 30 && x < 40)
-            put_pixel_at(i, urgb_u32(0, 0, 0xff));
-        else
-            put_pixel_at(i, 0);
+        // 计算彩虹位置偏移：整体色带随时间移动
+        uint x = (i * 256 / NUM_PIXELS + t) % 256;
+
+        // 彩虹色带计算（三段式：红-绿-蓝）
+        uint r = (x < 85) ? (255 - x * 3) : (x < 170) ? 0
+                                                      : (x - 170) * 3;
+
+        uint g = (x < 85) ? (x * 3) : (x < 170) ? (255 - (x - 85) * 3)
+                                                : 0;
+
+        uint b = (x < 85) ? 0 : (x < 170) ? ((x - 85) * 3)
+                                          : (255 - (x - 170) * 3);
+
+        put_pixel_at(i, urgb_u32(r, g, b));
     }
 }
 
-void pattern_random(uint t)
+void pattern_black(uint t)
 {
-    if (t % 8)
-        return;
-    for (uint i = 0; i < NUM_PIXELS; ++i)
-        put_pixel_at(i, rand() & 0x00ffffff); // 确保高位为0
-}
-
-void pattern_sparkle(uint t)
-{
-    if (t % 8)
-        return;
-    for (uint i = 0; i < NUM_PIXELS; ++i)
-        put_pixel_at(i, (rand() % 16) ? 0 : 0xffffff);
-}
-
-void pattern_greys(uint t)
-{
-    uint max = 100; // 亮度限制
-    t %= max;
+    // 全黑模式
     for (uint i = 0; i < NUM_PIXELS; ++i)
     {
-        put_pixel_at(i, t * 0x10101);
-        if (++t >= max)
-            t = 0;
+        put_pixel_at(i, 0);
     }
 }
