@@ -109,7 +109,7 @@ void led_blinking_task(void);
 #define ENCODER_BASE_SENSITIVITY 5	   // Base encoder sensitivity
 #define MOUSE_SENSITIVITY_MULTIPLIER 2 // Mouse movement multiplier
 #define GAMEPAD_SENSITIVITY 10		   // Gamepad axis sensitivity
-#define SMOOTHING_FACTOR 5.0f		   // Smoothing factor for mouse movement
+#define SMOOTHING_FACTOR 6.0f		   // Smoothing factor for mouse movement
 #define MAIN_LOOP_INTERVAL_MS 0.1	   // HID report interval
 
 // HID Report Echo variables

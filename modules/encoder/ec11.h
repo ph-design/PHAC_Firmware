@@ -15,21 +15,21 @@ typedef enum {
 // 编码器回调函数类型
 typedef void (*EC11_Callback)(EC11_Direction dir, void *user_data);
 
-// EC11编码器结构体
-typedef struct {
+typedef struct EC11_Encoder
+{
+    // 原有字段
     uint pin_a;
     uint pin_b;
     PIO pio;
     uint sm;
-    int32_t count;
-    int32_t last_count;
     EC11_Callback callback;
     void *user_data;
-    
-    // 去抖动相关
-    int32_t last_stable_count;  // 上次稳定的计数值
-    uint32_t last_update_time;  // 上次更新时间
-    uint8_t debounce_state;     // 去抖状态：0=稳定，1=去抖中
+    int32_t count;
+    int32_t last_count;
+    EC11_Direction last_direction;
+
+    // 新增状态指针
+    void *state_ptr;
 } EC11_Encoder;
 
 // 初始化EC11编码器
