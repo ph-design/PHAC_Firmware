@@ -48,6 +48,7 @@
         "time.h": "c",
         "pio.h": "c",
         "debounce.h": "c",
-        "gpio.h": "c"
+        "gpio.h": "c",
+        "cstdio": "c"
     }
 }

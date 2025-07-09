@@ -1,36 +1,47 @@
+// modules/encoder/ec11.h
 #ifndef EC11_H
 #define EC11_H
 
 #include "pico/stdlib.h"
+#include "hardware/pio.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+// 编码器旋转方向枚举
 typedef enum {
-    EC11_CW = 1,    // Clockwise rotation
-    EC11_CCW = -1   // Counterclockwise rotation
+    EC11_DIR_NONE = 0,
+    EC11_DIR_CW = 1,    // 顺时针
+    EC11_DIR_CCW = -1   // 逆时针
 } EC11_Direction;
 
-typedef void (*EC11_Callback)(EC11_Direction dir, void* user_data);
+// 编码器回调函数类型
+typedef void (*EC11_Callback)(EC11_Direction dir, void *user_data);
 
+// EC11编码器结构体
 typedef struct {
-    uint8_t pin_a;
-    uint8_t pin_b;
+    uint pin_a;
+    uint pin_b;
+    PIO pio;
+    uint sm;
+    int32_t count;
+    int32_t last_count;
     EC11_Callback callback;
-    void* user_data;
+    void *user_data;
     
-    uint8_t state;           // Current stable state
-    uint8_t last_raw_state;  // Last read raw state
-    uint32_t last_change_time; // Last state change time
-    uint8_t stable_counter;  // State stability counter
+    // 去抖动相关
+    int32_t last_stable_count;  // 上次稳定的计数值
+    uint32_t last_update_time;  // 上次更新时间
+    uint8_t debounce_state;     // 去抖状态：0=稳定，1=去抖中
 } EC11_Encoder;
 
-void ec11_init(EC11_Encoder* encoder, uint8_t pin_a, uint8_t pin_b, EC11_Callback cb, void* user_data);
-void ec11_update(EC11_Encoder* encoder);
+// 初始化EC11编码器
+void ec11_init(EC11_Encoder *encoder, uint pin_a, uint pin_b, EC11_Callback callback, void *user_data);
 
-#ifdef __cplusplus
-}
-#endif
+// 更新EC11编码器状态
+void ec11_update(EC11_Encoder *encoder);
 
-#endif
+// 获取EC11编码器当前计数
+int32_t ec11_get_count(EC11_Encoder *encoder);
+
+// 重置EC11编码器计数
+void ec11_reset_count(EC11_Encoder *encoder, int32_t value);
+
+#endif // EC11_H

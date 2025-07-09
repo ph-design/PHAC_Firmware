@@ -40,6 +40,7 @@ cmake_minimum_required(VERSION 3.13)
 add_executable(PHAC-Firmware)
 # Add the PIO source file for Project
 pico_generate_pio_header(PHAC-Firmware ${CMAKE_CURRENT_LIST_DIR}/modules/rgb/ws2812.pio OUTPUT_DIR ${CMAKE_CURRENT_LIST_DIR}/generated)
+pico_generate_pio_header(PHAC-Firmware ${CMAKE_CURRENT_LIST_DIR}/modules/encoder/ec11.pio OUTPUT_DIR ${CMAKE_CURRENT_LIST_DIR}/generated)
 
 target_sources(PHAC-Firmware PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/main.c

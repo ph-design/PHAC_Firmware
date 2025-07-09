@@ -1,75 +1,55 @@
+// modules/encoder/ec11.c
 #include "ec11.h"
-#include "hardware/gpio.h"
-#include "pico/time.h"
+#include "hardware/pio.h"
+#include "hardware/clocks.h"
+#include "ec11.pio.h"
 
-// Encoder state transition table
-static const int8_t transition_table[] = {
-    [0b0000] = 0,  [0b0001] = -1, [0b0010] = 1,  [0b0011] = 0,
-    [0b0100] = 1,  [0b0101] = 0,  [0b0110] = 0,  [0b0111] = -1,
-    [0b1000] = -1, [0b1001] = 0,  [0b1010] = 0,  [0b1011] = 1,
-    [0b1100] = 0,  [0b1101] = 1,  [0b1110] = -1, [0b1111] = 0
-};
-
-// Add state history buffer
-
-void ec11_init(EC11_Encoder* encoder, uint8_t pin_a, uint8_t pin_b, 
-              EC11_Callback cb, void* user_data) {
+// 初始化EC11编码器
+void ec11_init(EC11_Encoder *encoder, uint pin_a, uint pin_b, EC11_Callback callback, void *user_data) {
     encoder->pin_a = pin_a;
     encoder->pin_b = pin_b;
-    encoder->callback = cb;
+    encoder->callback = callback;
     encoder->user_data = user_data;
-    encoder->stable_counter = 0;
+    encoder->count = 0;
+    encoder->last_count = 0;
 
-    gpio_init(pin_a);
-    gpio_set_dir(pin_a, GPIO_IN);
-    gpio_pull_up(pin_a);
+    // 选择一个可用的PIO实例和状态机
+    encoder->pio = pio0;
+    encoder->sm = pio_claim_unused_sm(encoder->pio, true);
 
-    gpio_init(pin_b);
-    gpio_set_dir(pin_b, GPIO_IN);
-    gpio_pull_up(pin_b);
-
-    // Initialize state from current pin values
-    uint8_t init_state = (gpio_get(pin_a) << 1) | gpio_get(pin_b);
-    encoder->state = init_state;
-    encoder->last_raw_state = init_state;
-    encoder->last_change_time = time_us_32();
+    // 加载PIO程序
+    uint offset = pio_add_program(encoder->pio, &quadrature_encoder_program);
+    
+    // 初始化PIO程序
+    quadrature_encoder_program_init(encoder->pio, encoder->sm, encoder->pin_a, offset);
 }
 
-void ec11_update(EC11_Encoder* encoder) {
-    const uint32_t DEBOUNCE_TIME_US = 1000;      // Debounce time in microseconds
-    const uint8_t STABLE_THRESHOLD = 5;          // Number of stable reads required
-    uint32_t current_time = time_us_32();
-    uint8_t new_state = (gpio_get(encoder->pin_a) << 1) | gpio_get(encoder->pin_b);
+// 更新EC11编码器状态
+void ec11_update(EC11_Encoder *encoder) {
+    // 获取当前计数
+    encoder->count = quadrature_encoder_get_count(encoder->pio, encoder->sm);
     
-    // If state changes, reset debounce logic
-    if (new_state != encoder->last_raw_state) {
-        encoder->last_raw_state = new_state;
-        encoder->last_change_time = current_time;
-        encoder->stable_counter = 0;
-        return;
+    // 计算变化量
+    int32_t delta = encoder->count - encoder->last_count;
+    
+    // 如果有变化且设置了回调函数
+    if (delta != 0 && encoder->callback != NULL) {
+        EC11_Direction dir = (delta > 0) ? EC11_DIR_CW : EC11_DIR_CCW;
+        encoder->callback(dir, encoder->user_data);
     }
     
-    // Check if the state has been stable for enough time
-    if ((current_time - encoder->last_change_time) > DEBOUNCE_TIME_US) {
-        if (encoder->stable_counter < STABLE_THRESHOLD) {
-            encoder->stable_counter++;
-        }
-        
-        // If state is stable and different from last recorded stable state
-        if (encoder->stable_counter >= STABLE_THRESHOLD && 
-            new_state != encoder->state) {
-            
-            // Combine previous and current state to form a transition code
-            uint8_t transition = (encoder->state << 2) | new_state;
-            int8_t result = transition_table[transition];
-            
-            // If a valid rotation is detected, call the callback
-            if(result != 0 && encoder->callback) {
-                encoder->callback((EC11_Direction)result, encoder->user_data);
-            }
-            
-            // Update the stable state
-            encoder->state = new_state;
-        }
-    }
+    // 更新上次计数值
+    encoder->last_count = encoder->count;
+}
+
+// 获取EC11编码器当前计数
+int32_t ec11_get_count(EC11_Encoder *encoder) {
+    return encoder->count;
+}
+
+// 重置EC11编码器计数
+void ec11_reset_count(EC11_Encoder *encoder, int32_t value) {
+    encoder->count = value;
+    encoder->last_count = value;
+    // 注意：这里我们不重置PIO计数器，因为我们只跟踪相对变化
 }

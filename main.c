@@ -281,9 +281,7 @@ int main(void)
 	ec11_init(&encoder_x, ENCODER_X_PIN_A, ENCODER_X_PIN_B, encoder_x_callback, NULL);
 	ec11_init(&encoder_y, ENCODER_Y_PIN_A, ENCODER_Y_PIN_B, encoder_y_callback, NULL);
 
-	// Initialize ws2812
-	ws2812_init();
-	init_animation();
+
 
 	while (1)
 	{
@@ -294,10 +292,7 @@ int main(void)
 		ec11_update(&encoder_y);
 		debounce_update(&app.debounce);
 		hid_task(); // Process HID reports
-		update_animation();
 
-		// 更新DMA状态
-		ws2812_update_state();
 	}
 }
 
