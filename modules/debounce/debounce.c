@@ -1,7 +1,7 @@
 #include "debounce.h"
 
 #ifndef DEBOUNCE_TIME_US
-#define DEBOUNCE_TIME_US 5000
+#define DEBOUNCE_TIME_US 7000
 #endif
 
 static void debounce_none(DebounceState *state)
