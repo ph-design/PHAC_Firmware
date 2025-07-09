@@ -31,8 +31,8 @@
 #define BTN_FXR 0
 
 // Encoder configurations
-#define ENCODER_X_PIN_A 10
-#define ENCODER_X_PIN_B 9
+#define ENCODER_X_PIN_A 9
+#define ENCODER_X_PIN_B 10
 #define ENCODER_Y_PIN_A 7
 #define ENCODER_Y_PIN_B 8
 
