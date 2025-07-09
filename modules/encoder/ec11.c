@@ -21,7 +21,7 @@ void ec11_init(EC11_Encoder *encoder, uint pin_a, uint pin_b, EC11_Callback call
     uint offset = pio_add_program(encoder->pio, &quadrature_encoder_program);
     
     // 初始化PIO程序
-    quadrature_encoder_program_init(encoder->pio, encoder->sm, encoder->pin_a, offset);
+    quadrature_encoder_program_init(encoder->pio, encoder->sm, encoder->pin_a,3, true, 3);
 }
 
 // 更新EC11编码器状态

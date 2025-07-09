@@ -64,10 +64,12 @@ static inline pio_sm_config quadrature_encoder_program_get_default_config(uint o
 
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
-// max_step_rate is used to lower the clock of the state machine to save power
-// if the application doesn't require a very high sampling rate. Passing zero
-// will set the clock to the maximum
-static inline void quadrature_encoder_program_init(PIO pio, uint sm, uint pin, int max_step_rate)
+// Enhanced init function with debounce capability
+// max_step_rate: maximum step rate (0 for max speed)
+// debounce: enable debounce for mechanical encoders
+// debounce_level: debounce strength (1-10, higher = more debounce)
+static inline void quadrature_encoder_program_init(PIO pio, uint sm, uint pin, 
+    int max_step_rate, bool debounce, int debounce_level)
 {
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 2, false);
     pio_gpio_init(pio, pin);
@@ -75,29 +77,47 @@ static inline void quadrature_encoder_program_init(PIO pio, uint sm, uint pin, i
     gpio_pull_up(pin);
     gpio_pull_up(pin + 1);
     pio_sm_config c = quadrature_encoder_program_get_default_config(0);
-    sm_config_set_in_pins(&c, pin); // for WAIT, IN
-    sm_config_set_jmp_pin(&c, pin); // for JMP
-    // shift to left, autopull disabled
+    sm_config_set_in_pins(&c, pin);
+    sm_config_set_jmp_pin(&c, pin);
     sm_config_set_in_shift(&c, false, false, 32);
-    // don't join FIFO's
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_NONE);
-    // passing "0" as the sample frequency,
-    if (max_step_rate == 0) {
-        sm_config_set_clkdiv(&c, 1.0);
+    float div;
+    if (debounce) {
+        // Debounce mode: use slower clock for stability
+        // debounce_level controls the amount of debouncing
+        if (debounce_level < 1) debounce_level = 1;
+        if (debounce_level > 10) debounce_level = 10;
+        // Base debounce divisor, scaled by level
+        div = 1000.0f * debounce_level;
+        // If max_step_rate is specified, ensure we don't exceed it
+        if (max_step_rate > 0) {
+            float max_div = (float)clock_get_hz(clk_sys) / (10 * max_step_rate);
+            if (div < max_div) {
+                div = max_div;
+            }
+        }
     } else {
-        // one state machine loop takes at most 10 cycles
-        float div = (float)clock_get_hz(clk_sys) / (10 * max_step_rate);
-        sm_config_set_clkdiv(&c, div);
+        // Normal high-speed mode
+        if (max_step_rate == 0) {
+            div = 1.0f;
+        } else {
+            div = (float)clock_get_hz(clk_sys) / (10 * max_step_rate);
+        }
     }
+    sm_config_set_clkdiv(&c, div);
     pio_sm_init(pio, sm, 0, &c);
     pio_sm_set_enabled(pio, sm, true);
+}
+// Convenience function for mechanical encoders with default debounce
+static inline void quadrature_encoder_mechanical_init(PIO pio, uint sm, uint pin)
+{
+    quadrature_encoder_program_init(pio, sm, pin, 0, true, 3);
 }
 static inline int32_t quadrature_encoder_get_count(PIO pio, uint sm)
 {
     uint ret;
     int n;
-    // if the FIFO has N entries, we fetch them to drain the FIFO,
-    // plus one entry which will be guaranteed to not be stale
+    // Drain FIFO to get fresh sample
     n = pio_sm_get_rx_fifo_level(pio, sm) + 1;
     while (n > 0) {
         ret = pio_sm_get_blocking(pio, sm);
