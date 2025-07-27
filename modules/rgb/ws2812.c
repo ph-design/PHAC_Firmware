@@ -12,6 +12,7 @@ static uint32_t dma_buffer[NUM_PIXELS];
 static int dma_chan;
 static dma_state_t dma_state = DMA_IDLE;
 static uint32_t last_update_time = 0;
+static float current_brightness = 1.0f;
 
 void __isr dma_complete_handler(void)
 {
@@ -100,8 +101,13 @@ void ws2812_update_state(void)
     }
 }
 
-static uint32_t rgb_to_grb(uint8_t r, uint8_t g, uint8_t b)
+static uint32_t adjusted_rgb_to_grb(uint8_t r, uint8_t g, uint8_t b)
 {
+    // 应用亮度调整
+    r = (uint8_t)(r * current_brightness);
+    g = (uint8_t)(g * current_brightness);
+    b = (uint8_t)(b * current_brightness);
+
     return (((uint32_t)g << 16) | ((uint32_t)r << 8) | b) << 8;
 }
 
@@ -109,8 +115,14 @@ void set_button_color(uint index, uint8_t r, uint8_t g, uint8_t b)
 {
     if (index < NUM_PIXELS)
     {
-        pixel_buffer[index] = rgb_to_grb(r, g, b);
+        pixel_buffer[index] = adjusted_rgb_to_grb(r, g, b);
     }
+}
+
+void ws2812_set_brightness(float brightness)
+{
+    current_brightness = (brightness < 0.0f) ? 0.0f : (brightness > 1.0f) ? 1.0f
+                                                                          : brightness;
 }
 
 void clear_pixels(void)

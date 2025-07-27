@@ -30,6 +30,7 @@ void ws2812_init(void);
 void ws2812_cleanup(void);
 
 void set_button_color(uint index, uint8_t r, uint8_t g, uint8_t b);
+void ws2812_set_brightness(float brightness);
 void clear_pixels(void);
 
 uint32_t *ws2812_get_buffer(void);

@@ -151,13 +151,13 @@ static AppState app = {
 
 	.button_colors = {
 		//{red,green,blue}
-		{255, 192, 203}, // A
-		{255, 192, 203}, // B
-		{255, 192, 203}, // C
-		{255, 192, 203}, // D
-		{0, 47, 167},	 // fxL
-		{255, 10, 10},	 // START
-		{0, 47, 167},	 // fxR
+		{212, 93, 153}, // A
+		{212, 93, 153}, // B
+		{212, 93, 153}, // C
+		{212, 93, 153}, // D
+		{0, 47, 167},	// fxL
+		{255, 10, 10},	// START
+		{0, 47, 167},	// fxR
 	},
 	// give default mode as keyboard
 	.current_mode = MODE_KEYBOARD};
@@ -301,6 +301,7 @@ int main(void)
 
 	// Initialize ws2812
 	ws2812_init();
+	ws2812_set_brightness(DEFAULT_BRIGHTNESS);
 	init_animation();
 
 	while (1)
