@@ -51,6 +51,10 @@
         "gpio.h": "c",
         "cstdio": "c",
         "random": "c",
-        "limits": "c"
+        "limits": "c",
+        "flash.h": "c",
+        "ec11.h": "c",
+        "math.h": "c",
+        "bootrom.h": "c"
     }
 }
