@@ -37,9 +37,9 @@
 #define ENCODER_Y_PIN_B 8
 
 // WS2812 LED configurations
-#define DEFAULT_BRIGHTNESS 0.4 // 10% brightness
+#define DEFAULT_BRIGHTNESS 0.1 // 10% brightness
 #define RGB_COUNT 7
-#define IS_RGBW false // RGB mode, not RGBW
+#define IS_RGBW false
 
 // Flash storage configuration
 #define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
@@ -63,11 +63,18 @@ typedef struct
 
 typedef struct
 {
+	uint8_t r;
+	uint8_t g;
+	uint8_t b;
+} RGBColor;
+
+typedef struct
+{
 	DebounceState debounce;
 	EC11_Encoder encoder_x;
 	EC11_Encoder encoder_y;
 	uint8_t button_pins[BUTTON_COUNT];
-	uint32_t button_colors[BUTTON_COUNT];
+	RGBColor button_colors[BUTTON_COUNT];
 	uint8_t keymap_keyboard_mode[BUTTON_COUNT];
 	uint8_t keymap_gamepad_mode[BUTTON_COUNT];
 	SystemMode current_mode;
@@ -100,6 +107,8 @@ enum
 	BLINK_MOUNTED = 1000,
 	BLINK_SUSPENDED = 2500,
 };
+
+
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 static bool led_state = false;
 static char response_buf[64];
@@ -141,13 +150,14 @@ static AppState app = {
 	.keymap_gamepad_mode = {0, 1, 2, 3, 4, 5, 6},
 
 	.button_colors = {
-		0x1AB090, // BTN_BTA: 淡蓝色 (A键)
-		0x1AB090, // BTN_BTB: 淡蓝色 (B键)
-		0x1AB090, // BTN_BTC: 淡蓝色 (C键)
-		0x1AB090, // BTN_BTD: 淡蓝色 (D键)
-		0xFA0718, // BTN_FXL: 橙红色 (左功能键)
-		0x08BF08, // BTN_START: 深蓝色 (START键)
-		0xFA0718  // BTN_FXR: 橙红色 (右功能键)
+		//{red,green,blue}
+		{255, 192, 203}, // A
+		{255, 192, 203}, // B
+		{255, 192, 203}, // C
+		{255, 192, 203}, // D
+		{0, 47, 167},	 // fxL
+		{255, 10, 10},	 // START
+		{0, 47, 167},	 // fxR
 	},
 	// give default mode as keyboard
 	.current_mode = MODE_KEYBOARD};
@@ -175,13 +185,13 @@ static AnimationState anim_state = {
 typedef void (*pattern_func)(uint t);
 
 static const int button_led_map[BUTTON_COUNT] = {
-	1,  // A键 -> LED4
-	2,  // B键 -> LED3
-	3,  // C键 -> LED2
-	4,  // D键 -> LED1
-	6,  // 左功能键 -> LED5
-	0,  // START键 -> LED0
-	5   // 右功能键 -> LED6
+	1, // A -> LED1
+	2, // B -> LED2
+	3, // C -> LED3
+	4, // D -> LED4
+	6, // fxL -> LED6
+	0, // START -> LED0
+	5  // fxR -> LED5
 };
 
 const struct
@@ -189,6 +199,7 @@ const struct
 	pattern_func pat;
 	const char *name;
 } pattern_table[] = {
+	//{pattern_rainbow, "Rainbow"},
 	{pattern_black, "Black"},
 };
 const uint pattern_count = sizeof(pattern_table) / sizeof(pattern_table[0]);
@@ -626,19 +637,14 @@ void update_animation(void)
 
 void update_button_leds(uint32_t btn_state)
 {
-	for (int i = 0; i < BUTTON_COUNT; i++)
+	for (int BUTTON_INDEX = 0; BUTTON_INDEX < BUTTON_COUNT; BUTTON_INDEX++)
+	
 	{
-		int led_index = button_led_map[i];
-
-		if (btn_state & (1 << i))
+		const int LED_INDEX = button_led_map[BUTTON_INDEX];
+		RGBColor color = app.button_colors[BUTTON_INDEX];
+		if (btn_state & (1 << BUTTON_INDEX))
 		{
-			// 按键按下 - 设置红色
-			put_pixel_at(led_index, app.button_colors[i]); // 红色
-		}
-		else
-		{
-			// 按键释放 - 恢复动画颜色
-			// 这里不需要设置0，动画函数会设置颜色
+			set_button_color(LED_INDEX, color.r, color.g, color.b);
 		}
 	}
 }
