@@ -445,7 +445,7 @@ static void handle_rawhid_response(void)
 {
 	if (send_response && tud_hid_n_ready(ITF_GENERIC))
 	{
-		tud_hid_n_report(ITF_GENERIC, received_report_id, received_data, received_size);
+		tud_hid_n_report(ITF_GENERIC, 0, received_data, received_size);
 		send_response = false;
 	}
 }
@@ -548,6 +548,15 @@ void tud_hid_set_report_cb(
 
 	if (itf == ITF_GENERIC)
 	{
+		if (bufsize >= 5 && memcmp(buffer, "freq:", 5) == 0)
+		{
+			int freq = atoi((const char *)buffer + 5);
+			if (freq >= 100 && freq <= 5000)
+			{
+				blink_interval_ms = freq;
+				printf("设置闪烁频率: %dms\n", freq);
+			}
+		}
 		const char *prefix = "pico received: ";
 		size_t prefix_len = strlen(prefix); // 计算前缀长度
 		size_t total_available = sizeof(received_data);

@@ -80,7 +80,7 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t itf)
 // Configuration Descriptor - Interface/Endpoint setup
 //--------------------------------------------------------------------+
 
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_HID_DESC_LEN + TUD_HID_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN +3 * TUD_HID_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
 
 uint8_t const desc_configuration[] =
 		{
