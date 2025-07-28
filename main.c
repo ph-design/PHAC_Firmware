@@ -10,8 +10,10 @@
 #include "modules/encoder/ec11.h"
 #include "modules/debounce/debounce.h"
 #include "modules/rgb/ws2812.h"
+#include "modules/remap/remap.h"
 #include "math.h"
 #include "ws2812.pio.h"
+#include "config.h"
 
 //--------------------------------------------------------------------+
 // Hardware Configuration
@@ -41,10 +43,6 @@
 #define RGB_COUNT 7
 #define IS_RGBW false
 
-// Flash storage configuration
-#define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
-#define FLASH_CONFIG_MAGIC 0xABCD1234
-
 #define CLAMP(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
 
 // System operation modes
@@ -63,20 +61,10 @@ typedef struct
 
 typedef struct
 {
-	uint8_t r;
-	uint8_t g;
-	uint8_t b;
-} RGBColor;
-
-typedef struct
-{
 	DebounceState debounce;
 	EC11_Encoder encoder_x;
 	EC11_Encoder encoder_y;
 	uint8_t button_pins[BUTTON_COUNT];
-	RGBColor button_colors[BUTTON_COUNT];
-	uint8_t keymap_keyboard_mode[BUTTON_COUNT];
-	uint8_t keymap_gamepad_mode[BUTTON_COUNT];
 	SystemMode current_mode;
 } AppState;
 
@@ -108,7 +96,6 @@ enum
 	BLINK_SUSPENDED = 2500,
 };
 
-
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 static bool led_state = false;
 static char response_buf[64];
@@ -137,28 +124,8 @@ EC11_Encoder encoder_x, encoder_y;
 // Application state and keymap
 static AppState app = {
 	.button_pins = {
-		BTN_BTA,
-		BTN_BTB,
-		BTN_BTC,
-		BTN_BTD,
-		BTN_FXL,
-		BTN_START,
-		BTN_FXR},
-
-	.keymap_keyboard_mode = {HID_KEY_D, HID_KEY_F, HID_KEY_J, HID_KEY_K, HID_KEY_N, HID_KEY_Y, HID_KEY_M},
-
-	.keymap_gamepad_mode = {0, 1, 2, 3, 4, 5, 6},
-
-	.button_colors = {
-		//{red,green,blue}
-		{212, 93, 153}, // A
-		{212, 93, 153}, // B
-		{212, 93, 153}, // C
-		{212, 93, 153}, // D
-		{0, 47, 167},	// fxL
-		{255, 10, 10},	// START
-		{0, 47, 167},	// fxR
-	},
+		BTN_BTA, BTN_BTB, BTN_BTC,
+		BTN_BTD, BTN_FXL, BTN_START, BTN_FXR},
 	// give default mode as keyboard
 	.current_mode = MODE_KEYBOARD};
 
@@ -221,7 +188,7 @@ void encoder_x_callback(EC11_Direction dir, void *user_data)
 
 void encoder_y_callback(EC11_Direction dir, void *user_data)
 {
-	dir = (EC11_Direction)(-dir); //Sry for the shit code, becuz i'm too lazy
+	dir = (EC11_Direction)(-dir); // Sry for the shit code, becuz i'm too lazy
 	if (current_mode == MODE_GAMEPAD)
 	{
 		gamepad_y = (gamepad_y + dir * GAMEPAD_SENSITIVITY) % 512;
@@ -303,6 +270,7 @@ int main(void)
 	ws2812_init();
 	ws2812_set_brightness(DEFAULT_BRIGHTNESS);
 	init_animation();
+	remap_init();
 
 	while (1)
 	{
@@ -345,6 +313,8 @@ static uint32_t read_buttons(void)
 
 static void send_keyboard_report(uint32_t btn)
 {
+	// fix for under c99,do not use static const
+	const RemapConfig *config = remap_get_config();
 	if (!tud_hid_n_ready(ITF_KEYBOARD))
 		return;
 
@@ -360,7 +330,7 @@ static void send_keyboard_report(uint32_t btn)
 	{
 		if (btn & (1 << i))
 		{
-			keycode[key_cnt++] = app.keymap_keyboard_mode[i];
+			keycode[key_cnt++] = config->keymap_keyboard[i];
 		}
 	}
 	tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, key_cnt ? keycode : NULL);
@@ -411,16 +381,18 @@ static void handle_keyboard_mouse_mode(uint32_t btn_state)
 
 static void handle_gamepad_mode(uint32_t btn_state)
 {
+	// fix for under c99,do not use static const
+	const RemapConfig *config = remap_get_config();
 	uint32_t gamepad_buttons = 0;
 	for (int i = 0; i < BUTTON_COUNT; i++)
 	{
 		if (btn_state & (1 << i))
 		{
-			gamepad_buttons |= (1 << app.keymap_gamepad_mode[i]);
+			gamepad_buttons |= (1 << config->keymap_gamepad[i]);
 		}
 	}
 
-	// Map encoder positions to gamepad axes  
+	// Map encoder positions to gamepad axes
 	int16_t mapped_x = (int16_t)gamepad_x * 255 / 256 - 255;
 	int16_t mapped_y = (int16_t)gamepad_y * 255 / 256 - 255;
 
@@ -486,7 +458,7 @@ void hid_task(void)
 //---------------------------------------------------------------------
 SystemMode load_system_mode(void)
 {
-	const SystemConfig *config = (const SystemConfig *)(XIP_BASE + FLASH_TARGET_OFFSET);
+	const SystemConfig *config = (const SystemConfig *)(XIP_BASE + SYSTEM_CONFIG_OFFSET);
 	if (config->magic == FLASH_CONFIG_MAGIC)
 	{
 		return config->mode;
@@ -506,8 +478,8 @@ void save_system_mode(SystemMode mode)
 
 	// Safe flash operations
 	uint32_t ints = save_and_disable_interrupts();
-	flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE);
-	flash_range_program(FLASH_TARGET_OFFSET, sector, FLASH_SECTOR_SIZE);
+	flash_range_erase(SYSTEM_CONFIG_OFFSET, FLASH_SECTOR_SIZE);
+	flash_range_program(SYSTEM_CONFIG_OFFSET, sector, FLASH_SECTOR_SIZE);
 	restore_interrupts(ints);
 }
 
@@ -548,41 +520,86 @@ void tud_hid_set_report_cb(
 
 	if (itf == ITF_GENERIC)
 	{
-		if (bufsize >= 5 && memcmp(buffer, "freq:", 5) == 0)
+		// 调试输出
+		printf("Received HID report (%d bytes): ", bufsize);
+		for (int i = 0; i < bufsize; i++)
+			printf("%02X ", buffer[i]);
+		printf("\n");
+
+		// 处理二进制配置命令
+		if (bufsize >= 2)
+		{
+			uint8_t cmd_type = buffer[0]; // 定义 cmd_type 变量
+			uint8_t cmd_len = buffer[1];
+
+			// 添加读取配置命令处理
+			if (cmd_type == 0x80)
+			{ // 读取配置命令
+				size_t config_size = sizeof(RemapConfig);
+				if (config_size > sizeof(received_data))
+					config_size = sizeof(received_data);
+
+				// 确保发送完整配置结构
+				remap_get_raw_config(received_data, config_size);
+
+				// 添加调试输出
+				printf("Sending config data (%d bytes)\n", config_size);
+				for (int i = 0; i < config_size; i++)
+				{
+					printf("%02X ", received_data[i]);
+					if ((i + 1) % 16 == 0)
+						printf("\n");
+				}
+				printf("\n");
+
+				received_size = config_size;
+				received_report_id = report_id;
+				received_itf = itf;
+				send_response = true;
+				return;
+			}
+
+			// 处理其他配置命令
+			if (remap_process_command(buffer, bufsize))
+			{
+				// 成功处理配置后保存到Flash
+				remap_save_config();
+				printf("Config saved!\n");
+
+				// 发送成功响应
+				const char *resp = "OK";
+				memcpy(received_data, resp, strlen(resp));
+				received_size = strlen(resp);
+			}
+			else
+			{
+				// 发送错误响应
+				const char *resp = "ERROR";
+				memcpy(received_data, resp, strlen(resp));
+				received_size = strlen(resp);
+			}
+
+			received_report_id = report_id;
+			received_itf = itf;
+			send_response = true;
+		}
+		// 保留原有的文本命令处理
+		else if (bufsize >= 5 && memcmp(buffer, "freq:", 5) == 0)
 		{
 			int freq = atoi((const char *)buffer + 5);
 			if (freq >= 100 && freq <= 5000)
 			{
 				blink_interval_ms = freq;
 				printf("设置闪烁频率: %dms\n", freq);
+
+				// 响应
+				snprintf((char *)received_data, sizeof(received_data), "Freq set to %dms", freq);
+				received_size = strlen((char *)received_data);
+				received_report_id = report_id;
+				received_itf = itf;
+				send_response = true;
 			}
 		}
-		const char *prefix = "pico received: ";
-		size_t prefix_len = strlen(prefix); // 计算前缀长度
-		size_t total_available = sizeof(received_data);
-
-		// 确定实际可复制的前缀长度
-		size_t prefix_copy_len = (prefix_len <= total_available) ? prefix_len : total_available;
-
-		// 剩余空间用于数据部分
-		size_t data_available = total_available - prefix_copy_len;
-		size_t data_copy_size = (bufsize <= data_available) ? bufsize : data_available;
-
-		// 更新接收数据的总大小
-		received_size = prefix_copy_len + data_copy_size;
-
-		// 复制前缀到接收缓冲区
-		memcpy(received_data, prefix, prefix_copy_len);
-
-		// 复制数据部分到前缀之后
-		if (data_copy_size > 0)
-		{
-			memcpy(received_data + prefix_copy_len, buffer, data_copy_size);
-		}
-
-		received_report_id = report_id;
-		received_itf = itf;
-		send_response = true;
 	}
 }
 
@@ -647,14 +664,14 @@ void update_animation(void)
 
 void update_button_leds(uint32_t btn_state)
 {
-	for (int BUTTON_INDEX = 0; BUTTON_INDEX < BUTTON_COUNT; BUTTON_INDEX++)
-	
+	const RemapConfig *config = remap_get_config();
+
+	for (int i = 0; i < BUTTON_COUNT; i++)
 	{
-		const int LED_INDEX = button_led_map[BUTTON_INDEX];
-		RGBColor color = app.button_colors[BUTTON_INDEX];
-		if (btn_state & (1 << BUTTON_INDEX))
+		if (btn_state & (1 << i))
 		{
-			set_button_color(LED_INDEX, color.r, color.g, color.b);
+			RGBColor color = config->button_colors[i];
+			set_button_color(button_led_map[i], color.r, color.g, color.b);
 		}
 	}
 }
