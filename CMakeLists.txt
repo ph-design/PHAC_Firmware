@@ -48,14 +48,11 @@ target_sources(PHAC-Firmware PUBLIC
         modules/encoder/ec11.c
         modules/debounce/debounce.c
         modules/rgb/ws2812.c
-        modules/remap/remap.c
         )
 
 # Make sure TinyUSB can find tusb_config.h
 target_include_directories(PHAC-Firmware PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}/modules/usb
-        ${CMAKE_CURRENT_LIST_DIR}/modules/rgb
-        ${CMAKE_SOURCE_DIR})
+        ${CMAKE_CURRENT_LIST_DIR}/modules/usb)
 
 # In addition to pico_stdlib required for common PicoSDK functionality, add dependency on tinyusb_device
 # for TinyUSB device support and tinyusb_board for the additional board support library used by the example
