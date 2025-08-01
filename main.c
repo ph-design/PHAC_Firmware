@@ -10,8 +10,10 @@
 #include "modules/encoder/ec11.h"
 #include "modules/debounce/debounce.h"
 #include "modules/rgb/ws2812.h"
+#include "modules/remap/remap.h"
 #include "math.h"
 #include "ws2812.pio.h"
+#include "config.h"
 
 //--------------------------------------------------------------------+
 // Hardware Configuration
@@ -41,9 +43,6 @@
 #define RGB_COUNT 7
 #define IS_RGBW false
 
-// Flash storage configuration
-#define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
-#define FLASH_CONFIG_MAGIC 0xABCD1234
 
 #define CLAMP(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
 
@@ -61,12 +60,6 @@ typedef struct
 	SystemMode mode;
 } SystemConfig;
 
-typedef struct
-{
-	uint8_t r;
-	uint8_t g;
-	uint8_t b;
-} RGBColor;
 
 typedef struct
 {
@@ -74,9 +67,6 @@ typedef struct
 	EC11_Encoder encoder_x;
 	EC11_Encoder encoder_y;
 	uint8_t button_pins[BUTTON_COUNT];
-	RGBColor button_colors[BUTTON_COUNT];
-	uint8_t keymap_keyboard_mode[BUTTON_COUNT];
-	uint8_t keymap_gamepad_mode[BUTTON_COUNT];
 	SystemMode current_mode;
 } AppState;
 
@@ -145,20 +135,6 @@ static AppState app = {
 		BTN_START,
 		BTN_FXR},
 
-	.keymap_keyboard_mode = {HID_KEY_D, HID_KEY_F, HID_KEY_J, HID_KEY_K, HID_KEY_N, HID_KEY_Y, HID_KEY_M},
-
-	.keymap_gamepad_mode = {0, 1, 2, 3, 4, 5, 6},
-
-	.button_colors = {
-		//{red,green,blue}
-		{212, 93, 153}, // A
-		{212, 93, 153}, // B
-		{212, 93, 153}, // C
-		{212, 93, 153}, // D
-		{0, 47, 167},	// fxL
-		{255, 10, 10},	// START
-		{0, 47, 167},	// fxR
-	},
 	// give default mode as keyboard
 	.current_mode = MODE_KEYBOARD};
 
@@ -301,6 +277,7 @@ int main(void)
 
 	// Initialize ws2812
 	ws2812_init();
+	remap_init();
 	ws2812_set_brightness(DEFAULT_BRIGHTNESS);
 	init_animation();
 
@@ -355,12 +332,15 @@ static void send_keyboard_report(uint32_t btn)
 
 	uint8_t keycode[6] = {0};
 	uint8_t key_cnt = 0;
+	// fix for under c99,do not use static const
+
+	const RemapConfig *config = remap_get_config();
 
 	for (int i = 0; i < BUTTON_COUNT && key_cnt < 6; i++)
 	{
 		if (btn & (1 << i))
 		{
-			keycode[key_cnt++] = app.keymap_keyboard_mode[i];
+			keycode[key_cnt++] = config->keymap_keyboard[i];
 		}
 	}
 	tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, key_cnt ? keycode : NULL);
@@ -412,11 +392,14 @@ static void handle_keyboard_mouse_mode(uint32_t btn_state)
 static void handle_gamepad_mode(uint32_t btn_state)
 {
 	uint32_t gamepad_buttons = 0;
+	// fix for under c99,do not use static const
+
+	const RemapConfig *config = remap_get_config();
 	for (int i = 0; i < BUTTON_COUNT; i++)
 	{
 		if (btn_state & (1 << i))
 		{
-			gamepad_buttons |= (1 << app.keymap_gamepad_mode[i]);
+			gamepad_buttons |= (1 << config->keymap_gamepad[i]);
 		}
 	}
 
@@ -486,7 +469,7 @@ void hid_task(void)
 //---------------------------------------------------------------------
 SystemMode load_system_mode(void)
 {
-	const SystemConfig *config = (const SystemConfig *)(XIP_BASE + FLASH_TARGET_OFFSET);
+	const SystemConfig *config = (const SystemConfig *)(XIP_BASE + SYSTEM_CONFIG_OFFSET);
 	if (config->magic == FLASH_CONFIG_MAGIC)
 	{
 		return config->mode;
@@ -506,8 +489,8 @@ void save_system_mode(SystemMode mode)
 
 	// Safe flash operations
 	uint32_t ints = save_and_disable_interrupts();
-	flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE);
-	flash_range_program(FLASH_TARGET_OFFSET, sector, FLASH_SECTOR_SIZE);
+	flash_range_erase(SYSTEM_CONFIG_OFFSET, FLASH_SECTOR_SIZE);
+	flash_range_program(SYSTEM_CONFIG_OFFSET, sector, FLASH_SECTOR_SIZE);
 	restore_interrupts(ints);
 }
 
@@ -548,15 +531,7 @@ void tud_hid_set_report_cb(
 
 	if (itf == ITF_GENERIC)
 	{
-		if (bufsize >= 5 && memcmp(buffer, "freq:", 5) == 0)
-		{
-			int freq = atoi((const char *)buffer + 5);
-			if (freq >= 100 && freq <= 5000)
-			{
-				blink_interval_ms = freq;
-				printf("设置闪烁频率: %dms\n", freq);
-			}
-		}
+
 		const char *prefix = "pico received: ";
 		size_t prefix_len = strlen(prefix); // 计算前缀长度
 		size_t total_available = sizeof(received_data);
@@ -637,12 +612,6 @@ void update_animation(void)
 	pattern_table[anim_state.pattern_index].pat(anim_state.t);
 	anim_state.t += anim_state.dir;
 
-	if (anim_state.pattern_changed)
-	{
-		printf("%s %s\n", pattern_table[anim_state.pattern_index].name,
-			   anim_state.dir == 1 ? "(forward)" : "(backward)");
-		anim_state.pattern_changed = false;
-	}
 }
 
 void update_button_leds(uint32_t btn_state)
@@ -651,9 +620,12 @@ void update_button_leds(uint32_t btn_state)
 	
 	{
 		const int LED_INDEX = button_led_map[BUTTON_INDEX];
-		RGBColor color = app.button_colors[BUTTON_INDEX];
+		// fix for under c99,do not use static const
+
+		const RemapConfig *config = remap_get_config();
 		if (btn_state & (1 << BUTTON_INDEX))
 		{
+			RGBColor color = config->button_colors[BUTTON_INDEX];
 			set_button_color(LED_INDEX, color.r, color.g, color.b);
 		}
 	}
