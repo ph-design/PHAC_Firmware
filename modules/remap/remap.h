@@ -6,6 +6,8 @@
 #define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define FLASH_CONFIG_MAGIC 0x55AA1234
 
+#define REMAP_CONFIG_SIZE sizeof(RemapConfig)
+
 typedef struct
 {
     uint8_t keymap_keyboard[BUTTON_COUNT];

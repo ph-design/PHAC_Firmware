@@ -429,6 +429,10 @@ static void handle_rawhid_response(void)
 	if (send_response && tud_hid_n_ready(ITF_GENERIC))
 	{
 		tud_hid_n_report(ITF_GENERIC, 0, received_data, received_size);
+
+		// 清空缓冲区
+		memset(received_data, 0, sizeof(received_data));
+		received_size = 0;
 		send_response = false;
 	}
 }
@@ -494,6 +498,8 @@ void save_system_mode(SystemMode mode)
 	restore_interrupts(ints);
 }
 
+
+
 //--------------------------------------------------------------------+
 // USB HID callbacks
 //---------------------------------------------------------------------
@@ -531,33 +537,50 @@ void tud_hid_set_report_cb(
 
 	if (itf == ITF_GENERIC)
 	{
-
-		const char *prefix = "pico received: ";
-		size_t prefix_len = strlen(prefix); // 计算前缀长度
-		size_t total_available = sizeof(received_data);
-
-		// 确定实际可复制的前缀长度
-		size_t prefix_copy_len = (prefix_len <= total_available) ? prefix_len : total_available;
-
-		// 剩余空间用于数据部分
-		size_t data_available = total_available - prefix_copy_len;
-		size_t data_copy_size = (bufsize <= data_available) ? bufsize : data_available;
-
-		// 更新接收数据的总大小
-		received_size = prefix_copy_len + data_copy_size;
-
-		// 复制前缀到接收缓冲区
-		memcpy(received_data, prefix, prefix_copy_len);
-
-		// 复制数据部分到前缀之后
-		if (data_copy_size > 0)
+		// 检查是否为请求配置命令 (0x80)
+		if (bufsize >= 1 && buffer[0] == 0x80)
 		{
-			memcpy(received_data + prefix_copy_len, buffer, data_copy_size);
-		}
+			received_size = sizeof(received_data);
+			remap_get_raw_config(received_data, received_size);
 
-		received_report_id = report_id;
-		received_itf = itf;
-		send_response = true;
+			memmove(received_data + 1, received_data, sizeof(RemapConfig));
+
+			received_data[0] = buffer[0];
+
+			size_t new_size = sizeof(RemapConfig) + 1;
+
+			if (new_size < sizeof(received_data))
+			{
+				memset(received_data + new_size, 0, sizeof(received_data) - new_size);
+			}
+
+			received_report_id = report_id;
+			received_itf = itf;
+			send_response = true;
+		}
+		else
+		{
+			// 原有回显逻辑，但前面加0x00并填充至64字节
+			size_t copy_size = (bufsize <= sizeof(received_data) - 1) ? bufsize : sizeof(received_data) - 1;
+
+			if (copy_size > 0)
+			{
+				memmove(received_data + 1, buffer, copy_size);
+			}
+
+			received_data[0] = 0x00;
+
+			received_size = copy_size + 1;
+
+			if (received_size < sizeof(received_data))
+			{
+				memset(received_data + received_size, 0, sizeof(received_data) - received_size);
+			}
+
+			received_report_id = report_id;
+			received_itf = itf;
+			send_response = true;
+		}
 	}
 }
 
