@@ -291,23 +291,23 @@ int main(void)
 		debounce_update(&app.debounce);
 		hid_task();
 
-		// 更新动画（只修改像素缓冲区）
+		// Update animation (only modify the pixel buffer)
 		update_animation();
 
-		// 新增：读取按键状态并更新LED
+		// Added: Read button states and update LEDs
 		uint32_t btn_state = read_buttons();
 		update_button_leds(btn_state);
 
-		// 统一更新DMA缓冲区
+		// Unified update of the DMA buffer
 		ws2812_update_buffer();
 
-		// 启动传输（如果DMA空闲）
+		// Start transfer (if DMA is idle)
 		if (!ws2812_is_busy())
 		{
 			ws2812_start_transfer();
 		}
 
-		// 更新DMA状态
+		// Update DMA state
 		ws2812_update_state();
 	}
 }
@@ -430,7 +430,7 @@ static void handle_rawhid_response(void)
 	{
 		tud_hid_n_report(ITF_GENERIC, 0, received_data, received_size);
 
-		// 清空缓冲区
+		// Clear the buffer
 		memset(received_data, 0, sizeof(received_data));
 		received_size = 0;
 		send_response = false;
@@ -537,18 +537,16 @@ void tud_hid_set_report_cb(
 
 	if (itf == ITF_GENERIC)
 	{
-		// 检查是否为请求配置命令 (0x80)
+		// Check if it is a request configuration command (0x80)
 		if (bufsize >= 1 && buffer[0] == 0x80)
 		{
 			received_size = sizeof(received_data);
 			remap_get_raw_config(received_data, received_size);
 
 			memmove(received_data + 1, received_data, sizeof(RemapConfig));
-
-			received_data[0] = buffer[0];
+			received_data[0] = buffer[0]; // Add 0x80 header
 
 			size_t new_size = sizeof(RemapConfig) + 1;
-
 			if (new_size < sizeof(received_data))
 			{
 				memset(received_data + new_size, 0, sizeof(received_data) - new_size);
@@ -557,10 +555,35 @@ void tud_hid_set_report_cb(
 			received_report_id = report_id;
 			received_itf = itf;
 			send_response = true;
+			return;
+		}
+		if(bufsize >= 2)
+		{
+			// Handle key remapping commands
+			bool processed = remap_process_command(buffer, bufsize);
+			
+			// Save the configuration to flash (only if the command was processed successfully)
+			if (processed) {
+				remap_save_config();
+			}
+
+			// Construct response: The first byte is the processing status (0=success, 1=failure)
+			received_data[0] = processed ? 0x00 : 0x01;
+			received_size = 1;
+			
+			// Fill the remaining bytes with 0
+			if (received_size < sizeof(received_data)) {
+				memset(received_data + received_size, 0, sizeof(received_data) - received_size);
+			}
+
+			received_report_id = report_id;
+			received_itf = itf;
+			send_response = true;
+			return;
 		}
 		else
 		{
-			// 原有回显逻辑，但前面加0x00并填充至64字节
+			// Original echo logic, but add 0x00 and fill to 64 bytes
 			size_t copy_size = (bufsize <= sizeof(received_data) - 1) ? bufsize : sizeof(received_data) - 1;
 
 			if (copy_size > 0)
@@ -612,7 +635,7 @@ void init_animation(void)
 	anim_state.pattern_changed = true;
 }
 
-// 更新动画（非阻塞）
+// Update animation (non-blocking)
 void update_animation(void)
 {
 	uint32_t now = time_us_32();
@@ -631,7 +654,7 @@ void update_animation(void)
 		anim_state.pattern_changed = true;
 	}
 
-	// 更新所有LED的像素缓冲区
+	// Update the pixel buffer for all LEDs
 	pattern_table[anim_state.pattern_index].pat(anim_state.t);
 	anim_state.t += anim_state.dir;
 

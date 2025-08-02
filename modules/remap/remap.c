@@ -132,6 +132,13 @@ bool remap_process_command(const uint8_t *data, uint16_t len)
             return true;
         }
         break;
+
+    case 0x07: // Save current configuration
+        if (cmd_len == 0)   
+        {
+            remap_save_config();
+            return true;
+        }
     }
 
     return false;
