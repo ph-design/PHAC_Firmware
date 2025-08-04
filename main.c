@@ -537,14 +537,36 @@ void tud_hid_set_report_cb(
 
 	if (itf == ITF_GENERIC)
 	{
-		// Check if it is a request configuration command (0x80)
-		if (bufsize >= 1 && buffer[0] == 0x80)
+		//get version
+		if (bufsize >= 1 && buffer[0] == 0x81)
+		{
+			received_size = sizeof(received_data);
+			remap_ret_firmware_version(received_data, received_size);
+
+			memmove(received_data + 1, received_data, strlen((char*)received_data));
+			received_data[0] = buffer[0]; // Add 0x81 header
+
+			size_t version_len = strlen((char*)received_data + 1);
+			size_t new_size = version_len + 1;
+			if (new_size < sizeof(received_data))
+			{
+				memset(received_data + new_size, 0, sizeof(received_data) - new_size);
+			}
+
+			received_report_id = report_id;
+			received_itf = itf;
+			send_response = true;
+			return;
+		}
+		
+		// Check if it is a request configuration command (0x82)
+		if (bufsize >= 1 && buffer[0] == 0x82)
 		{
 			received_size = sizeof(received_data);
 			remap_get_raw_config(received_data, received_size);
 
 			memmove(received_data + 1, received_data, sizeof(RemapConfig));
-			received_data[0] = buffer[0]; // Add 0x80 header
+			received_data[0] = buffer[0]; // Add 0x82 header
 
 			size_t new_size = sizeof(RemapConfig) + 1;
 			if (new_size < sizeof(received_data))

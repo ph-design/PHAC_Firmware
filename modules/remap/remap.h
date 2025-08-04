@@ -29,4 +29,5 @@ void remap_init(void);
 const RemapConfig *remap_get_config(void);
 bool remap_process_command(const uint8_t *data, uint16_t len);
 void remap_get_raw_config(uint8_t *buffer, size_t max_len);
+void remap_ret_firmware_version(uint8_t *buffer, size_t max_len);
 void remap_save_config(void);

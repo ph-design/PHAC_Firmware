@@ -47,6 +47,11 @@ static const RGBColor default_button_colors[BUTTON_COUNT] = {
 #define DEFAULT_BRIGHTNESS 0.1
 #define DEFAULT_ANIM_SPEED 100
 
+// Firmware Version
+#define FIRMWARE_VERSION "1.0.0"
+// Compile time timestamp
+#define COMPILE_TIMESTAMP __DATE__ " " __TIME__
+
 // Memory offsets,don't change this unless you know what you're doing
 #define FLASH_SECTOR_SIZE (1u << 12)
 #define SYSTEM_CONFIG_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)

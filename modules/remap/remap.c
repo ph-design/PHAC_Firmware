@@ -44,13 +44,33 @@ void remap_get_raw_config(uint8_t *buffer, size_t max_len)
     if (copy_len > max_len)
         copy_len = max_len;
     memcpy(buffer, config, copy_len);
+
+    if (copy_len < max_len)
+    {
+        memset(buffer + copy_len, 0, max_len - copy_len);
+    }
+}
+
+void remap_ret_firmware_version(uint8_t *buffer, size_t max_len)
+{
+    const char version_info[] = FIRMWARE_VERSION "-" COMPILE_TIMESTAMP;
+    size_t version_len = strlen(version_info);
+    
+    if (version_len > max_len)
+        version_len = max_len;
+    
+    memcpy(buffer, version_info, version_len);
+    
+    if (version_len < max_len)
+    {
+        memset(buffer + version_len, 0, max_len - version_len);
+    }
 }
 
 bool remap_process_command(const uint8_t *data, uint16_t len)
 {
     if (len < 2)
-        return false; // Need at least command type and length
-
+        return false;
     uint8_t cmd_type = data[0];
     uint8_t cmd_len = data[1];
 
