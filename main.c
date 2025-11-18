@@ -541,7 +541,7 @@ void tud_hid_set_report_cb(
 		if (bufsize >= 1 && buffer[0] == 0x81)
 		{
 			received_size = sizeof(received_data);
-			remap_ret_firmware_version(received_data, received_size);
+			remap_get_firmware_version(received_data, received_size);
 
 			memmove(received_data + 1, received_data, strlen((char*)received_data));
 			received_data[0] = buffer[0]; // Add 0x81 header
@@ -565,10 +565,11 @@ void tud_hid_set_report_cb(
 			received_size = sizeof(received_data);
 			remap_get_raw_config(received_data, received_size);
 
-			memmove(received_data + 1, received_data, sizeof(RemapConfig));
+			memmove(received_data + 2, received_data, sizeof(RemapConfig));
 			received_data[0] = buffer[0]; // Add 0x82 header
+			received_data[1] = (uint8_t)current_mode; // Add current mode (MODE_KEYBOARD=1 or MODE_GAMEPAD=2)
 
-			size_t new_size = sizeof(RemapConfig) + 1;
+			size_t new_size = sizeof(RemapConfig) + 2;
 			if (new_size < sizeof(received_data))
 			{
 				memset(received_data + new_size, 0, sizeof(received_data) - new_size);
@@ -579,6 +580,69 @@ void tud_hid_set_report_cb(
 			send_response = true;
 			return;
 		}
+		
+		// Set device mode command (0x83)
+		if (bufsize >= 2 && buffer[0] == 0x83)
+		{
+			uint8_t new_mode_value = buffer[1];
+			SystemMode new_mode;
+			bool mode_valid = false;
+			if (new_mode_value == 0)
+			{
+				// Enter bootloader mode
+				reset_usb_boot(0, 0);
+				return; // Should not reach here
+			}
+			// Validate mode value
+			else if (new_mode_value == 1)
+			{
+				new_mode = MODE_KEYBOARD;
+				mode_valid = true;
+			}
+			else if (new_mode_value == 2)
+			{
+				new_mode = MODE_GAMEPAD;
+				mode_valid = true;
+			}
+
+			if (mode_valid && new_mode != current_mode)
+			{
+				// Update current mode
+				current_mode = new_mode;
+				
+				// Save to flash
+				save_system_mode(current_mode);
+				
+				// Reset encoder positions for gamepad mode
+				if (current_mode == MODE_GAMEPAD)
+				{
+					gamepad_x = 0;
+					gamepad_y = 0;
+				}
+				else
+				{
+					remaining_delta_x = 0.0f;
+					remaining_delta_y = 0.0f;
+				}
+			}
+
+			// Send response with new mode
+			received_data[0] = buffer[0]; // Echo 0x83
+			received_data[1] = mode_valid ? 0x00 : 0x01; // Status: 0=success, 1=invalid mode
+			received_data[2] = (uint8_t)current_mode; // Current mode after operation
+			received_size = 3;
+
+			if (received_size < sizeof(received_data))
+			{
+				memset(received_data + received_size, 0, sizeof(received_data) - received_size);
+			}
+
+			received_report_id = report_id;
+			received_itf = itf;
+			send_response = true;
+			return;
+		}
+		
 		if(bufsize >= 2)
 		{
 			// Handle key remapping commands

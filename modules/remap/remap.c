@@ -51,7 +51,7 @@ void remap_get_raw_config(uint8_t *buffer, size_t max_len)
     }
 }
 
-void remap_ret_firmware_version(uint8_t *buffer, size_t max_len)
+void remap_get_firmware_version(uint8_t *buffer, size_t max_len)
 {
     const char version_info[] = FIRMWARE_VERSION "-" COMPILE_TIMESTAMP;
     size_t version_len = strlen(version_info);
