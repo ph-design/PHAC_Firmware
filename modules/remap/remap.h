@@ -28,8 +28,8 @@ typedef struct
     // START button protection settings
     uint16_t start_protection_ms;  // Protection time: 0/100/250/500
     bool start_macro_enabled;      // Enable START macro feature
-    uint8_t start_macro_trigger_key;  // Which key to press before password (placeholder)
-    uint8_t start_macro_password[4];  // 4-digit password, default: 1,2,3,4
+    uint8_t start_macro_trigger_key;  // HID keycode for trigger key (any letter/number/symbol)
+    uint8_t start_macro_password[4];  // 4-digit password (1-9), default: 1,2,3,4
 } RemapConfig;
 
 #pragma pack(push, 1)

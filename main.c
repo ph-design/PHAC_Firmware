@@ -437,7 +437,7 @@ static void update_start_macro(void)
 	
 	switch (start_state.macro_step)
 	{
-		case 0: // Press trigger key (placeholder)
+		case 0: // Press trigger key (any letter/number)
 			keycode[0] = config->start_macro_trigger_key;
 			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, keycode);
 			break;

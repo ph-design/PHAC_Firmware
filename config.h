@@ -48,7 +48,7 @@ static const RGBColor default_button_colors[BUTTON_COUNT] = {
 #define DEFAULT_ANIM_SPEED 100
 
 // Firmware Version
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "1.1.0"
 // Compile time timestamp
 #define COMPILE_TIMESTAMP __DATE__ " " __TIME__
 
