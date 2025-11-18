@@ -151,6 +151,34 @@ static float remaining_delta_y = 0.0f;
 
 static SystemMode current_mode = MODE_KEYBOARD;
 
+// START button protection and macro state
+typedef struct
+{
+	uint32_t press_start_time;     // Time when START was pressed
+	bool is_pressed;                // START button current state
+	bool protection_passed;         // Protection time has passed
+	uint8_t double_click_count;     // Double-click counter for macro
+	uint32_t last_click_time;       // Last click timestamp
+	bool macro_executing;           // Macro is currently executing
+	uint8_t macro_step;             // Current macro step
+	uint32_t macro_step_time;       // Time for macro step delay
+} StartButtonState;
+
+static StartButtonState start_state = {
+	.press_start_time = 0,
+	.is_pressed = false,
+	.protection_passed = false,
+	.double_click_count = 0,
+	.last_click_time = 0,
+	.macro_executing = false,
+	.macro_step = 0,
+	.macro_step_time = 0
+};
+
+#define DOUBLE_CLICK_INTERVAL_MS 300  // Double-click detection interval
+#define MACRO_TRIGGER_CLICKS 3        // 3 clicks to trigger macro
+#define MACRO_STEP_DELAY_MS 50        // Delay between macro steps
+
 static AnimationState anim_state = {
 	.t = 0,
 	.dir = 1,
@@ -210,6 +238,9 @@ void encoder_y_callback(EC11_Direction dir, void *user_data)
 
 void hid_task(void);
 static void send_keyboard_report(uint32_t btn);
+static void handle_start_button(void);
+static void update_start_macro(void);
+static uint32_t process_start_button(uint32_t raw_btn_state);
 
 SystemMode load_system_mode(void);
 void save_system_mode(SystemMode mode);
@@ -320,6 +351,148 @@ static uint32_t read_buttons(void)
 	return debounce_get_states(&app.debounce);
 }
 
+//--------------------------------------------------------------------+
+// START Button Protection and Macro Implementation
+//---------------------------------------------------------------------
+
+// Process START button with protection and double-click detection
+static uint32_t process_start_button(uint32_t raw_btn_state)
+{
+	const RemapConfig *config = remap_get_config();
+	const uint32_t current_time = board_millis();
+	const bool start_pressed_now = (raw_btn_state & (1 << 5)) != 0;
+	
+	// Handle START button state transitions
+	if (start_pressed_now && !start_state.is_pressed)
+	{
+		// START button just pressed
+		start_state.is_pressed = true;
+		start_state.press_start_time = current_time;
+		start_state.protection_passed = false;
+		
+		// Double-click detection for macro
+		if (config->start_macro_enabled)
+		{
+			if ((current_time - start_state.last_click_time) < DOUBLE_CLICK_INTERVAL_MS)
+			{
+				start_state.double_click_count++;
+			}
+			else
+			{
+				start_state.double_click_count = 1;
+			}
+			start_state.last_click_time = current_time;
+			
+			// Trigger macro on triple-click
+			if (start_state.double_click_count >= MACRO_TRIGGER_CLICKS)
+			{
+				start_state.macro_executing = true;
+				start_state.macro_step = 0;
+				start_state.macro_step_time = current_time;
+				start_state.double_click_count = 0;
+				return raw_btn_state & ~(1 << 5);
+			}
+		}
+	}
+	else if (!start_pressed_now && start_state.is_pressed)
+	{
+		// START button just released
+		start_state.is_pressed = false;
+		start_state.protection_passed = false;
+	}
+	
+	// Check if protection time has passed
+	if (start_state.is_pressed && !start_state.protection_passed)
+	{
+		uint32_t hold_time = current_time - start_state.press_start_time;
+		if (hold_time >= config->start_protection_ms)
+		{
+			start_state.protection_passed = true;
+		}
+		else
+		{
+			return raw_btn_state & ~(1 << 5);
+		}
+	}
+	
+	return raw_btn_state;
+}
+
+// Execute START macro step by step
+static void update_start_macro(void)
+{
+	if (!start_state.macro_executing)
+		return;
+	
+	const RemapConfig *config = remap_get_config();
+	const uint32_t current_time = board_millis();
+	
+	if ((current_time - start_state.macro_step_time) < MACRO_STEP_DELAY_MS)
+		return;
+	
+	if (!tud_hid_n_ready(ITF_KEYBOARD))
+		return;
+	
+	uint8_t keycode[6] = {0};
+	
+	switch (start_state.macro_step)
+	{
+		case 0: // Press trigger key (placeholder)
+			keycode[0] = config->start_macro_trigger_key;
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, keycode);
+			break;
+			
+		case 1: // Release trigger key
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, NULL);
+			break;
+			
+		case 2: // Press first digit
+			keycode[0] = HID_KEY_1 - 1 + config->start_macro_password[0];
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, keycode);
+			break;
+			
+		case 3: // Release
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, NULL);
+			break;
+			
+		case 4: // Press second digit
+			keycode[0] = HID_KEY_1 - 1 + config->start_macro_password[1];
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, keycode);
+			break;
+			
+		case 5: // Release
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, NULL);
+			break;
+			
+		case 6: // Press third digit
+			keycode[0] = HID_KEY_1 - 1 + config->start_macro_password[2];
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, keycode);
+			break;
+			
+		case 7: // Release
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, NULL);
+			break;
+			
+		case 8: // Press fourth digit
+			keycode[0] = HID_KEY_1 - 1 + config->start_macro_password[3];
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, keycode);
+			break;
+			
+		case 9: // Release and finish
+			tud_hid_n_keyboard_report(ITF_KEYBOARD, 0, 0, NULL);
+			start_state.macro_executing = false;
+			start_state.macro_step = 0;
+			return;
+	}
+	
+	start_state.macro_step++;
+	start_state.macro_step_time = current_time;
+}
+
+//--------------------------------------------------------------------+
+// Keyboard Report
+//---------------------------------------------------------------------
+
 static void send_keyboard_report(uint32_t btn)
 {
 	if (!tud_hid_n_ready(ITF_KEYBOARD))
@@ -348,6 +521,16 @@ static void send_keyboard_report(uint32_t btn)
 
 static void handle_keyboard_mouse_mode(uint32_t btn_state)
 {
+	// Process START button with protection and handle macro
+	update_start_macro();
+	
+	// If macro is executing, skip normal keyboard report
+	if (start_state.macro_executing)
+		return;
+	
+	// Apply START button protection
+	btn_state = process_start_button(btn_state);
+	
 	send_keyboard_report(btn_state);
 
 	int8_t step_x = 0;

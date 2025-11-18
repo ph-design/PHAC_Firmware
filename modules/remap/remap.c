@@ -13,6 +13,24 @@ void remap_init(void)
     {
         // Load configuration from flash
         memcpy(&current_config, &stored->config, sizeof(RemapConfig));
+        
+        // Validate START protection time, reset if invalid
+        if (current_config.start_protection_ms != 0 && 
+            current_config.start_protection_ms != 100 && 
+            current_config.start_protection_ms != 250 && 
+            current_config.start_protection_ms != 500)
+        {
+            current_config.start_protection_ms = 0;
+        }
+        
+        // Validate password digits (0-9), reset if invalid
+        for (int i = 0; i < 4; i++)
+        {
+            if (current_config.start_macro_password[i] > 9)
+            {
+                current_config.start_macro_password[i] = i + 1; // Reset to 1,2,3,4
+            }
+        }
     }
     else
     {
@@ -25,6 +43,15 @@ void remap_init(void)
                sizeof(default_button_colors));
         current_config.brightness = DEFAULT_BRIGHTNESS;
         current_config.anim_speed = DEFAULT_ANIM_SPEED;
+        
+        // Default START button settings
+        current_config.start_protection_ms = 0;  // Disabled by default
+        current_config.start_macro_enabled = false;
+        current_config.start_macro_trigger_key = HID_KEY_TAB;  // Default: Tab key
+        current_config.start_macro_password[0] = 1;  // Default: 1234
+        current_config.start_macro_password[1] = 2;
+        current_config.start_macro_password[2] = 3;
+        current_config.start_macro_password[3] = 4;
     }
 
     // Apply configuration
@@ -142,6 +169,15 @@ bool remap_process_command(const uint8_t *data, uint16_t len)
             // Restore brightness and animation speed
             current_config.brightness = DEFAULT_BRIGHTNESS;
             current_config.anim_speed = DEFAULT_ANIM_SPEED;
+            
+            // Restore START button settings
+            current_config.start_protection_ms = 0;
+            current_config.start_macro_enabled = false;
+            current_config.start_macro_trigger_key = HID_KEY_TAB;
+            current_config.start_macro_password[0] = 1;
+            current_config.start_macro_password[1] = 2;
+            current_config.start_macro_password[2] = 3;
+            current_config.start_macro_password[3] = 4;
 
             // Apply brightness setting
             ws2812_set_brightness(current_config.brightness);
@@ -159,6 +195,44 @@ bool remap_process_command(const uint8_t *data, uint16_t len)
             remap_save_config();
             return true;
         }
+        break;
+
+    case 0x08: // Set START button protection time
+        if (cmd_len == 2)
+        {
+            uint16_t protection_ms = (payload[0] << 8) | payload[1];
+            // Validate protection time: 0, 100, 250, or 500 ms
+            if (protection_ms == 0 || protection_ms == 100 || 
+                protection_ms == 250 || protection_ms == 500)
+            {
+                current_config.start_protection_ms = protection_ms;
+                return true;
+            }
+        }
+        break;
+
+    case 0x09: // Configure START macro
+        // Format: [enabled(1byte), trigger_key(1byte), digit1, digit2, digit3, digit4]
+        if (cmd_len == 6)
+        {
+            current_config.start_macro_enabled = payload[0] != 0;
+            current_config.start_macro_trigger_key = payload[1];
+            
+            // Validate password digits (1-9 and 0)
+            for (int i = 0; i < 4; i++)
+            {
+                if (payload[2 + i] >= 0 && payload[2 + i] <= 9)
+                {
+                    current_config.start_macro_password[i] = payload[2 + i];
+                }
+                else
+                {
+                    return false; // Invalid digit
+                }
+            }
+            return true;
+        }
+        break;
     }
 
     return false;
