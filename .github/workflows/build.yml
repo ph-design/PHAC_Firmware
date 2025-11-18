@@ -43,23 +43,31 @@ jobs:
         cd build
         make -j$(nproc)
     
+    - name: Extract version and prepare artifacts
+      run: |
+        VERSION=$(grep 'FIRMWARE_VERSION' config.h | cut -d'"' -f2)
+        DATE=$(date +%Y%m%d)
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "BUILD_DATE=$DATE" >> $GITHUB_ENV
+        
+        # Rename UF2 file with version and date
+        cd build
+        if [ -f "PHAC-Firmware.uf2" ]; then
+          cp PHAC-Firmware.uf2 PHAC-Firmware-v${VERSION}-${DATE}.uf2
+        fi
+    
     - name: Upload firmware artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: firmware-${{ github.sha }}
-        path: |
-          build/*.uf2
-          build/*.elf
-          build/*.bin
-          build/*.hex
-        if-no-files-found: warn
+        name: PHAC-Firmware-v${{ env.VERSION }}-${{ env.BUILD_DATE }}.uf2
+        path: build/PHAC-Firmware-v*.uf2
+        compression-level: 0
+        if-no-files-found: error
     
     - name: Create release on tag
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          build/*.uf2
-          build/*.elf
+        files: build/PHAC-Firmware-v*.uf2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
