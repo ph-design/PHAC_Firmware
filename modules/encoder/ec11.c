@@ -6,16 +6,22 @@
 #include <stdlib.h>
 #include <math.h>
 
-// 平滑参数配置6
-#define SMOOTHING_FACTOR 6  // 每个物理事件生成4个逻辑事件
+// 平滑参数配置
+#define SMOOTHING_FACTOR 12  // 每个物理事件生成的逻辑事件数
 #define EVENT_INTERVAL_MS 1 // 事件分发间隔(毫秒)
-#define QUEUE_SIZE 32       // 事件队列大小
+#define QUEUE_SIZE 64       // 事件队列大小(增大以支持更多插值点)
 #define MAX_ENCODERS 2      // 支持的最大编码器数量
+
+static inline float smootherstep(float t) {
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
 
 typedef struct
 {
     EC11_Direction dir;
     uint32_t scheduled_time;
+    uint8_t step_index;      // 当前是第几个插值点 (0 到 SMOOTHING_FACTOR-1)
+    uint8_t total_steps;     // 总插值点数
 } EncoderEvent;
 
 typedef struct
@@ -38,14 +44,24 @@ static EncoderState encoder_states[MAX_ENCODERS];
 static uint8_t encoder_count = 0;
 
 // 队列操作函数 (接收EncoderState指针)
-static bool queue_push(EncoderState *state, EC11_Direction dir)
+static bool queue_push(EncoderState *state, EC11_Direction dir, uint8_t step_idx, uint8_t total)
 {
     if (state->queue_count >= QUEUE_SIZE)
         return false;
 
+    // 使用Smootherstep计算非均匀时间间隔
+    float progress = (float)(step_idx + 1) / (float)total;
+    float eased_progress = smootherstep(progress);
+    
+    // 基础时间 + 缓动后的延迟
+    uint32_t base_delay_us = EVENT_INTERVAL_MS * 1000 * total;
+    uint32_t eased_delay_us = (uint32_t)(base_delay_us * eased_progress);
+    
     state->event_queue[state->queue_tail].dir = dir;
-    state->event_queue[state->queue_tail].scheduled_time =
-        time_us_32() + (EVENT_INTERVAL_MS * 1000);
+    state->event_queue[state->queue_tail].step_index = step_idx;
+    state->event_queue[state->queue_tail].total_steps = total;
+    state->event_queue[state->queue_tail].scheduled_time = time_us_32() + eased_delay_us;
+    
     state->queue_tail = (state->queue_tail + 1) % QUEUE_SIZE;
     state->queue_count++;
     return true;
@@ -144,11 +160,15 @@ void ec11_update(EC11_Encoder *encoder)
             encoder->last_direction = current_dir;
         }
 
-        // 生成平滑事件
-        uint8_t events_to_add = abs(delta) * SMOOTHING_FACTOR;
-        for (int i = 0; i < events_to_add; i++)
+        // 生成平滑事件 - 使用缓动插值
+        uint8_t events_per_click = SMOOTHING_FACTOR;
+        uint8_t total_events = abs(delta) * events_per_click;
+        
+        for (int i = 0; i < total_events; i++)
         {
-            queue_push(state, current_dir);
+            // 每个事件都带有插值进度信息
+            uint8_t step_in_click = i % events_per_click;
+            queue_push(state, current_dir, step_in_click, events_per_click);
         }
 
         encoder->last_count = encoder->count;
